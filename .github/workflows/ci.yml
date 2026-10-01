@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+      - name: rustfmt
+        if: runner.os == 'Linux'
+        run: cargo fmt --check
+      - name: clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: test
+        run: cargo test --locked
+
+  web:
+    name: Web app + JS/Rust interop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+      - name: JavaScript syntax
+        run: for f in script.js sync.js qr.js sw.js; do node --check "$f"; done
+      - name: Manifest is valid JSON
+        run: node -e 'JSON.parse(require("fs").readFileSync("manifest.webmanifest", "utf8"))'
+      - name: Build CLI
+        run: cargo build --locked
+        working-directory: cli
+      - name: qr.js matches the Rust qrcode crate
+        run: |
+          (cd cli && cargo run -q --locked --example qr_fixtures) > "$RUNNER_TEMP/qr.json"
+          node tests/qr_crosscheck.mjs "$RUNNER_TEMP/qr.json"
+      - name: Sync codes and merge rules agree (JS <-> Rust)
+        run: node tests/sync_interop.mjs

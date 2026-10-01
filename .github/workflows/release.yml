@@ -1,0 +1,113 @@
+name: Release
+
+# Push a tag like v1.2.3 (matching cli/Cargo.toml) to build and publish.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: Tag matches Cargo.toml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          v=$(grep -m1 '^version' cli/Cargo.toml | cut -d'"' -f2)
+          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match cli/Cargo.toml version $v"
+            exit 1
+          fi
+
+  ci:
+    needs: version
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: ci
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+          key: ${{ matrix.target }}
+      - name: Build
+        working-directory: cli
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Stage asset
+        shell: bash
+        run: |
+          mkdir -p dist
+          ext=""; [[ "${{ matrix.target }}" == *windows* ]] && ext=".exe"
+          cp "cli/target/${{ matrix.target }}/release/kwnote$ext" "dist/kwnote-${{ matrix.target }}$ext"
+      - name: Smoke test
+        if: matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          bin=$(ls dist/kwnote-*)
+          "$bin" --version
+          KWNOTE_HOME="$RUNNER_TEMP/kw" "$bin" add qa smoke test
+          KWNOTE_HOME="$RUNNER_TEMP/kw" "$bin" list --all | grep -q smoke
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kwnote-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum kwnote-* > SHA256SUMS
+          cat SHA256SUMS
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<NOTES
+          kwnote — spaced-repetition memory notes: web app (PC / phone) + vim-style terminal UI,
+          synced by animated QR codes, text codes, files or your LAN (\`kwnote serve\`).
+          See the [README](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/README.md).
+
+          ## Install
+
+          Download the binary for your platform below, make it executable and put it on your \`PATH\`
+          (e.g. \`chmod +x kwnote-aarch64-apple-darwin && mv kwnote-aarch64-apple-darwin /usr/local/bin/kwnote\`),
+          or build from source: \`cargo install --git https://github.com/${GITHUB_REPOSITORY}.git --tag ${GITHUB_REF_NAME} kwnote\`.
+
+          Already installed? \`kwnote update\` (checksum-verified against \`SHA256SUMS\`).
+
+          The web app is \`index.htm\` in this repository; \`kwnote serve\` also hosts it on your LAN.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "kwnote $GITHUB_REF_NAME" \
+            --notes-file notes.md \
+            --verify-tag

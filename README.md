@@ -25,9 +25,19 @@ Web アプリ（PC・スマホ）と、vim 風キー操作のターミナル版 
 
 ## CLI / TUI（Rust）
 
+[Releases](https://github.com/igarinpiano/kwnote/releases/latest) から自分の環境のバイナリ（macOS: `kwnote-aarch64-apple-darwin` / `kwnote-x86_64-apple-darwin`、Linux: `kwnote-x86_64-unknown-linux-gnu` / `kwnote-aarch64-unknown-linux-gnu`、Windows: `kwnote-x86_64-pc-windows-msvc.exe`）をダウンロードし、`kwnote` という名前で PATH に置きます。
+
 ```bash
-cd cli && cargo install --path .
+chmod +x kwnote-aarch64-apple-darwin && mv kwnote-aarch64-apple-darwin /usr/local/bin/kwnote
 ```
+
+ソースからビルドする場合:
+
+```bash
+cargo install --git https://github.com/igarinpiano/kwnote.git kwnote
+```
+
+**アップデート**: `kwnote update`（最新リリースを取得し、`SHA256SUMS` で検証してから置き換え）。`kwnote update --check` で確認だけ、`--tag v1.0.0` で特定バージョン。
 
 ```bash
 kwnote                                   # 復習 TUI（vim 風: j/k, Enter, c, u, o, e, dd, /, :, ?）

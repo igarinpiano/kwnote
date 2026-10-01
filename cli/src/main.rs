@@ -6,6 +6,7 @@ mod model;
 mod server;
 mod store;
 mod tui;
+mod update;
 
 use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
@@ -104,6 +105,18 @@ enum Cmd {
     },
     /// Print the data file path
     Path,
+    /// Update kwnote to the latest GitHub release (checksum-verified)
+    Update {
+        /// Only check whether a newer release exists
+        #[arg(long)]
+        check: bool,
+        /// Reinstall even if already up to date
+        #[arg(long)]
+        force: bool,
+        /// Install a specific release tag (e.g. v1.0.0)
+        #[arg(long, value_name = "TAG")]
+        tag: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -270,6 +283,7 @@ fn run() -> Result<()> {
             );
             Ok(())
         }
+        Cmd::Update { check, force, tag } => update::run(check, force, tag.as_deref()),
         Cmd::Path => {
             println!("{}", store::data_path().display());
             Ok(())
