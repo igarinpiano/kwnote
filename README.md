@@ -31,6 +31,8 @@ Web アプリ（PC・スマホ）と、vim 風キー操作のターミナル版 
 chmod +x kwnote-aarch64-apple-darwin && mv kwnote-aarch64-apple-darwin /usr/local/bin/kwnote
 ```
 
+macOS でブラウザからダウンロードした場合は「開発元を確認できません」と出るので、一度だけ `xattr -d com.apple.quarantine /usr/local/bin/kwnote` を実行してください（`kwnote update` での更新では不要）。
+
 ソースからビルドする場合:
 
 ```bash
