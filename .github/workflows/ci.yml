@@ -33,8 +33,6 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: cli
       - name: rustfmt
         if: runner.os == 'Linux'
         run: cargo fmt --check
@@ -53,8 +51,6 @@ jobs:
           node-version: 22
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: cli
       - name: JavaScript syntax
         run: for f in script.js sync.js qr.js sw.js; do node --check "$f"; done
       - name: Manifest is valid JSON

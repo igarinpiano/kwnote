@@ -1,7 +1,7 @@
 // Interop between sync.js (browser) and the Rust CLI:
 //  * sync codes made by JS import into the CLI and vice versa
 //  * mergeDocs in JS == `kwnote import` merge in Rust (randomised)
-//   (cd cli && cargo build) && node tests/sync_interop.mjs
+//   cargo build && node tests/sync_interop.mjs
 import fs from "node:fs";
 import os from "node:os";
 import vm from "node:vm";
@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const bin = process.env.KWNOTE_BIN || path.join(root, "cli/target/debug/kwnote");
+const bin = process.env.KWNOTE_BIN || path.join(root, "target/debug/kwnote");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "kwnote-test-"));
 const ctx = { TextEncoder, TextDecoder, CompressionStream, DecompressionStream, Blob, Response, btoa, atob, Math, JSON };
 ctx.globalThis = ctx;

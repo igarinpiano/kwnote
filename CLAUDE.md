@@ -13,10 +13,12 @@
 | `qr.js` | `KWQR`: 依存ゼロの QR エンコーダ（byte mode, v1–40, L/M/Q/H） |
 | `style.css` | Windows XP 風スタイル（作者の意図。崩さない） |
 | `sw.js` / `manifest.webmanifest` / `icon.svg` | PWA（https / localhost のときだけ SW 登録） |
+| `Cargo.toml`（ルート） | Cargo workspace（members = `cli`）。`cross` は workspace ルートしか Docker にマウントしないため、`cli/` が埋め込む `../../index.htm` 等が見えるようルートを workspace にしている。`Cargo.lock`・`target/` もルート |
 | `cli/` | Rust CLI。`model.rs`(データ・マージ・スケジュール) `store.rs`(保存) `codec.rs`(同期コード/QR) `server.rs`(LAN サーバー) `client.rs`(`kwnote sync`) `tui.rs`(vim 風 TUI) `update.rs`(自己アップデート) `main.rs`(サブコマンド)。`build.rs` が target triple を埋め込む |
 | `cli/examples/qr_fixtures.rs` | `qr.js` 検証用の参照 QR 行列（Rust `qrcode` crate） |
 | `tests/*.mjs` | Node 製の相互運用テスト（下記） |
 | `.github/workflows/` | CI（`ci.yml`）とリリース（`release.yml`） |
+| `install.sh` / `install.ps1` | `curl … \| sh` / `irm … \| iex` 用インストーラ（OS・CPU 判定 → 最新リリース取得 → SHA256 検証） |
 
 Web 側は**ビルド工程なし・クラシック `<script>`**（ES modules は `file://` で動かないため使わない）。外部依存は、カメラ読み取りで `BarcodeDetector` が無い環境（iPhone Safari 等）だけ遅延ロードする jsQR（jsDelivr, SRI 固定）のみ。
 
@@ -73,14 +75,18 @@ cd cli && cargo build            # Web ファイルを埋め込むので、Web �
 cd cli && cargo test             # model/codec/TUI（TestBackend で実キー操作→描画を検証）
 cd cli && cargo clippy && cargo fmt
 cd cli && cargo run -q --example qr_fixtures > /tmp/qr.json && node ../tests/qr_crosscheck.mjs /tmp/qr.json
-node tests/sync_interop.mjs      # 要 cli/target/debug/kwnote。JS⇔Rust の同期コード往復とマージ一致（乱数200件）
+node tests/sync_interop.mjs      # 要 target/debug/kwnote（ルートで cargo build）。JS⇔Rust の同期コード往復とマージ一致（乱数200件）
 for f in script.js sync.js qr.js sw.js; do node --check $f; done
 ```
 
 ## CI・リリース
 
 - `.github/workflows/ci.yml`: push(master)/PR で Rust（ubuntu/macos/windows: fmt・clippy `-D warnings`・test）と Web（構文・manifest・QR 照合・JS⇔Rust 相互運用）。
-- `.github/workflows/release.yml`: `v*` タグの push で、タグと `cli/Cargo.toml` の version 一致を確認 → CI → 5 ターゲット（linux x86_64/aarch64, macOS x86_64/aarch64, windows x86_64）をビルド・スモークテスト → `SHA256SUMS` を付けて GitHub Release を作成。
+- `.github/workflows/release.yml`: `v*` タグの push で、タグと `cli/Cargo.toml` の version 一致を確認 → CI → 26 ターゲットをビルド → `SHA256SUMS` を付けて GitHub Release を作成。
+  - ネイティブ runner（cargo）: linux gnu x86_64/aarch64, macOS x86_64/aarch64, windows msvc x86_64/i686/aarch64。
+  - `cross`（Docker）: linux musl/gnu の x86・ARM 各種・riscv64gc・powerpc64le・s390x・loongarch64、Android 3 種、FreeBSD/NetBSD/illumos、windows-gnu。Linux 系は `cross run`（QEMU）で `--version`・`add`・`list` のスモークテストまで行う。
+  - 手動実行（workflow_dispatch, 入力 `tag`/`publish`）: 既存リリースに**足りないアセットだけ追加**し `SHA256SUMS` を作り直す。バイナリに入るもの（`cli/src`, `build.rs`, Web ファイル, Cargo.lock の内容）がタグと完全一致しないと失敗する。`publish` 無しならビルドだけのドライラン。
+  - ターゲットを増やすときは release.yml の matrix、`install.sh`/`install.ps1` の判定、README の対応表を揃える。
 - リリース手順: `cli/Cargo.toml` の version を上げる → `cargo build`（Cargo.lock 更新）→ commit → master に push → `git tag vX.Y.Z && git push origin vX.Y.Z`。
 - `kwnote update`（`cli/src/update.rs`）はアセット名 `kwnote-<target triple>[.exe]` と `SHA256SUMS` に依存する。target triple は `build.rs` が `KWNOTE_TARGET` として埋め込む。アセット名・ターゲットを変えるときは両方を合わせる。リポジトリは `KWNOTE_UPDATE_REPO` で差し替え可（既定 `igarinpiano/kwnote`）。
 

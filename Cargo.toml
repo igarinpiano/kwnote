@@ -1,0 +1,11 @@
+# The workspace root is the repository root so that tools which only see the
+# workspace (e.g. `cross`, which builds inside Docker) can reach the web app
+# files that cli/ embeds with include_str!("../../index.htm").
+[workspace]
+members = ["cli"]
+resolver = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
