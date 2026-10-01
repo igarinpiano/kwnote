@@ -1,0 +1,14 @@
+{
+  "name": "MEMORY SUPPORT SYSTEM (kwnote)",
+  "short_name": "kwnote",
+  "description": "記憶を支援します — spaced-repetition notes with QR / LAN sync",
+  "lang": "ja",
+  "start_url": "index.htm",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ece9d8",
+  "theme_color": "#0058e6",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
