@@ -30,12 +30,16 @@
 
 <div style="padding:15pt" class="page">
 <!--<h1 class="app-title">記憶支援システム</h1>-->
-<p class="app-hint desktop-only">j/k:移動　h/l:ぶんしょう⇄もんだい　Enter:答え　c:OK　u:元に戻す　o:登録　e:編集　dd:削除　/:検索　::コマンド　?:ヘルプ</p>
+<p class="app-hint desktop-only">j/k:選択移動　Enter:答えトグル　C:OK（入力欄フォーカス中は無効）</p>
 
 <br>
   <div class="pane-head" id="reading-head" data-pane="reading">
     <p class="section-title">今日のぶんしょう：<span class="pane-count" id="reading-count"></span></p>
-    <button class="view-toggle" data-pane="reading" title="t">今日 / 全部</button>
+    <div class="pane-tools">
+      <input type="search" class="pane-filter" data-pane="reading" placeholder="検索 / Filter" style="display:none;">
+      <button class="undo-btn" title="元に戻す / Undo" disabled>↶</button>
+      <button class="view-toggle" data-pane="reading">今日 / 全部</button>
+    </div>
   </div>
   <div class="loading-wrap" id="reading-wrap">
     <table class="qa-table">
@@ -54,7 +58,11 @@
 
   <div class="pane-head" id="qa-head" data-pane="qa">
     <p class="section-title">今日のもんだい：<span class="pane-count" id="qa-count"></span></p>
-    <button class="view-toggle" data-pane="qa" title="t">今日 / 全部</button>
+    <div class="pane-tools">
+      <input type="search" class="pane-filter" data-pane="qa" placeholder="検索 / Filter" style="display:none;">
+      <button class="undo-btn" title="元に戻す / Undo" disabled>↶</button>
+      <button class="view-toggle" data-pane="qa">今日 / 全部</button>
+    </div>
   </div>
   <div class="loading-wrap" id="qa-wrap">
     <table class="qa-table">
@@ -71,7 +79,7 @@
     <p class="empty-msg" id="qa-empty" style="display:none;">- None -</p>
     <div class="loading-overlay" id="qa-loading"><span class="spinner"></span>Processing…</div>
   </div>
-  <p class="app-hint mobile-only">行を右にスワイプ: Sure（OK）／左にスワイプ: Show（答え）</p>
+  <p class="app-hint mobile-only">行を右にスワイプ: Sure（OK）／左にスワイプ: Show（答え）。ぶんしょうは右スワイプかチェックで完了</p>
 
   <br>
   <hr>
@@ -129,6 +137,7 @@
       <button id="qr-show-btn">SHOW QR</button>
       <button id="qr-scan-btn">SCAN QR</button>
       <button id="code-copy-btn">COPY CODE</button>
+      <button id="code-paste-btn">PASTE CODE</button>
       <button id="file-save-btn">SAVE FILE</button>
       <button id="file-open-btn">OPEN FILE</button>
       <button id="share-btn" style="display:none;">SHARE</button>
@@ -139,26 +148,18 @@
       <ul>
         <li><b>QR</b>: 送る側で SHOW QR、受け取る側で SCAN QR。コードが複数枚なら自動で切り替わるので、全部そろうまで映し続けるだけ。逆方向も同様にすると両方が同じ内容になります。</li>
         <li><b>LAN</b>: PCで <code>kwnote serve</code> を実行し、表示されたQRをスマホのカメラで読むと、このアプリがそのPCから開き自動で同期されます。PCのブラウザは <code>http://localhost:7878</code> を開くだけ。</li>
-        <li><b>テキスト / ファイル</b>: COPY CODE / SAVE FILE で書き出し、相手側の LOAD / OPEN FILE で読み込み。メッセージアプリやAirDropでも送れます。</li>
+        <li><b>テキスト / ファイル</b>: COPY CODE / SAVE FILE で書き出し、相手側の PASTE CODE / OPEN FILE で読み込み。メッセージアプリやAirDropでも送れます。</li>
         <li>読み込みはすべて<b>マージ</b>です（新しく更新された方が勝ち、削除も伝わります）。</li>
       </ul>
     </details>
   </div>
   <br>
 
-  <p class="section-title">Backup:</p>
-  <div class="backup-controls">
-    <button id="export-btn">EXPORT</button>
-    <button id="import-btn">LOAD</button>
-    <button id="replace-btn">REPLACE</button>
-  </div>
-  <textarea class="backup-area" id="backup-area" placeholder="Export results are shown here / Paste the JSON or sync code (KW1:…) to load here"></textarea>
 
 
 <div class="mobile-controls">
   <button id="m-up" aria-label="up">▲</button>
   <button id="m-down" aria-label="down">▼</button>
-  <button id="m-pane" aria-label="switch pane">⇄</button>
   <button id="m-show">Show</button>
   <button id="m-ok">Sure</button>
   <button id="m-undo" aria-label="undo">↶</button>
@@ -167,11 +168,8 @@
 
 </div>
 
-<div class="statusbar" id="statusbar">
-  <span class="sb-mode" id="sb-mode">NORMAL</span>
+<div class="statusbar" id="statusbar" role="status" aria-live="polite">
   <span class="sb-msg" id="sb-msg"></span>
-  <span class="sb-cmd" id="sb-cmd" style="display:none;"><span id="sb-cmd-prefix">:</span><input type="text" id="cmdline" autocomplete="off" autocapitalize="off" spellcheck="false"></span>
-  <span class="sb-keys" id="sb-keys"></span>
 </div>
 
 <script src="qr.js"></script>

@@ -64,7 +64,7 @@ th {
     animation:qa-spin 0.8s linear infinite;
 }
 @keyframes qa-spin{to{transform:rotate(360deg);}}
-.reading-controls, .backup-controls, .settings-row{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
+.reading-controls, .settings-row{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
 .qa-table{width:100%; border-collapse:collapse; overflow-x:auto; display:block;}
 .qa-table thead, .qa-table tbody{display:table; width:100%; table-layout:fixed;}
 .qa-row{cursor:pointer;
@@ -157,22 +157,30 @@ input[type=text], input[type=date], textarea, input[type=number]{
 .empty-msg{
     opacity:0.6; font-size:0.85rem;
 }
-.backup-area{width:100%; height:80px; font-family:monospace; font-size:0.75rem; margin-top:6px;}
+.code-area{width:min(80vw, 480px); height:160px; font-family:monospace; font-size:0.75rem;}
 .settings-row label{font-size:0.8rem;}
 .settings-row input[type=number]{width:50px;}
 .mobile-controls{display:none;}
 
 .turn-due{font-weight:bold;}
 .qa-row.turn-color-done{background:var(--done-bg); color:var(--done-fg);}
-.qa-row.selected.selected-blur .qa-cell{background:#9db3e0; color:#000;}
 .qa-row{transition:transform 0.12s ease-out;}
 
 /* ---- panes ---- */
-.pane-head{display:flex; align-items:center; justify-content:space-between; gap:8px; cursor:pointer;}
+.pane-head{display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;}
 .pane-head .section-title{margin:0 0 6px;}
-.pane-head.pane-focused .section-title::before{content:"▶ "; color:#0c4ed5;}
+.pane-tools{display:flex; align-items:center; gap:6px; margin-bottom:6px;}
+.pane-tools button{font-size:0.75rem; padding:2px 8px;}
+.pane-filter{padding:3px 6px !important; font-size:0.85rem !important; width:12em;}
+.undo-btn{font-size:0.9rem !important; padding:1px 8px !important;}
+/* extra columns: ぶんしょうの完了チェック / 全部表示の 編集・削除 */
+.qa-table.with-extra .qa-cell-sentence, .qa-table.with-extra .qa-cell-note{width:auto;}
+.qa-cell-done{width:72px; text-align:center; padding-left:4px !important; padding-right:4px !important;}
+.qa-cell-actions{width:84px; text-align:center; white-space:nowrap;}
+.done-check{width:18px; height:18px; cursor:pointer; vertical-align:middle;}
+.row-btn{padding:1px 6px; font-size:0.8rem; margin:0 1px;}
+.qa-row.reading-row{cursor:default;}
 .pane-count{font-size:0.85rem; font-weight:normal; color:#555; margin-left:6px;}
-.view-toggle{font-size:0.75rem; padding:2px 8px; margin-bottom:6px;}
 .edit-badge{font-size:0.75rem; background:#f3c44b; border:1px solid #000; padding:1px 6px; vertical-align:middle;}
 .add-form.editing{outline:2px dashed #f3c44b; outline-offset:4px;}
 .cancel-btn{align-self:flex-end;}
@@ -231,27 +239,19 @@ input[type=text], input[type=date], textarea, input[type=number]{
 .qr-cell{width:10px; height:10px; background:#ccc; border:1px solid #999;}
 .qr-cell.got{background:#1a9b3c;}
 .menu-item{width:min(80vw, 320px); text-align:left; padding:10px 12px; font-size:1rem;}
-.help-table{border-collapse:collapse; font-size:0.85rem;}
-.help-table th{text-align:left; padding:8px 4px 2px; color:#0c4ed5; border-bottom:1px solid #d2cba4;}
-.help-table td{padding:2px 8px; vertical-align:top;}
-.help-key{font-family:monospace; white-space:nowrap; font-weight:bold;}
 
-/* ---- vim status bar ---- */
-body{padding-bottom:28px;}
+/* ---- messages: XP tooltip-style toast ---- */
 .statusbar{
-  position:fixed; left:0; right:0; bottom:0; z-index:20; height:26px;
-  display:flex; align-items:center; gap:8px; padding:0 8px 0 0;
-  background:#d6d2c2; border-top:1px solid #fff; box-shadow:0 -1px 0 #a09c8c;
-  font-family:monospace; font-size:0.8rem;
+  position:fixed; left:0; right:0; bottom:16px; z-index:20;
+  display:none; justify-content:center; pointer-events:none;
 }
-.sb-mode{padding:0 8px; height:100%; display:flex; align-items:center; color:#fff; font-weight:bold; background:#0c4ed5;}
-.sb-mode-insert{background:#1a9b3c;}
-.sb-mode-command{background:#b8860b;}
-.sb-msg{flex:1; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;}
-.sb-msg.sb-error{color:#fff; background:#c22; padding:0 6px;}
-.sb-cmd{flex:1; display:flex; align-items:center;}
-.sb-cmd input{flex:1; border:none; background:transparent; font-family:monospace; font-size:0.85rem; padding:2px; outline:none;}
-.sb-keys{min-width:3em; text-align:right; color:#444;}
+.statusbar.has-msg{display:flex;}
+.sb-msg{
+  background:#ffffe1; color:#000; border:1px solid #000; padding:3px 10px;
+  font-size:0.85rem; box-shadow:2px 2px 4px rgba(0,0,0,0.3); max-width:90vw;
+  overflow:hidden; white-space:nowrap; text-overflow:ellipsis;
+}
+.sb-msg.sb-error{background:#c22; color:#fff;}
 
 @media (max-width:700px){
   .qa-cell-turn{display:none;}
@@ -267,10 +267,9 @@ body{padding-bottom:28px;}
     background:#ece9d8; border-top:1px solid var(--border);
   }
   .mobile-controls button{flex:1; font-size:1rem; padding:10px 2px; min-width:0;}
-  .statusbar{bottom:calc(68px + env(safe-area-inset-bottom,0px)); height:22px; background:transparent; box-shadow:none; border:none; pointer-events:none;}
-  .statusbar .sb-mode, .statusbar .sb-keys{display:none;}
-  .statusbar.has-msg .sb-msg, .statusbar .sb-cmd{pointer-events:auto; background:#ffffe1; border:1px solid #000; padding:0 6px; flex:0 1 auto; margin:0 auto;}
-  .statusbar .sb-msg.sb-error{background:#c22;}
+  .statusbar{bottom:calc(72px + env(safe-area-inset-bottom,0px));}
+  .pane-filter{width:9em;}
+  .qa-cell-actions{width:72px;}
   .add-form > button{width:100%;}
   .sync-row button{flex:1 1 30%;}
   input[type=text], input[type=date], textarea, input[type=number]{font-size:16px;} /* no iOS zoom */

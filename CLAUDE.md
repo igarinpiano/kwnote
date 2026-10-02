@@ -8,7 +8,7 @@
 | パス | 役割 |
 |---|---|
 | `index.htm` | Web アプリ本体（GitHub Pages / `file://` / `kwnote serve` から開く） |
-| `script.js` | 画面・状態・vim 風キー操作・登録/編集/削除・同期ボタンの配線 |
+| `script.js` | 画面・状態・キー操作（j/k/Enter/c）・登録/編集/削除・同期ボタンの配線 |
 | `sync.js` | `KWSync`: マージ規則、同期コード（QR/テキスト）、LAN サーバー通信、QR 表示/読み取りダイアログ |
 | `qr.js` | `KWQR`: 依存ゼロの QR エンコーダ（byte mode, v1–40, L/M/Q/H） |
 | `style.css` | Windows XP 風スタイル（作者の意図。崩さない） |
@@ -42,7 +42,7 @@ Web 側は**ビルド工程なし・クラシック `<script>`**（ES modules �
 3. settings は `settings.updatedAt` が大きい方
 4. 並び順は「手元の順 + 相手にしか無いものを末尾」
 
-すべての取り込み（QR・テキスト・ファイル・LAN）はこのマージ。上書きは Web の REPLACE と `kwnote import --replace` だけ。
+すべての取り込み（QR・テキスト・ファイル・LAN）はこのマージ。上書きは `kwnote import --replace` だけ（Web には上書き手段を置かない）。
 
 ## 同期方式
 
@@ -63,10 +63,12 @@ Web 側は**ビルド工程なし・クラシック `<script>`**（ES modules �
 - https のページ（GitHub Pages 等）から http の LAN サーバーへは mixed content で接続不可。LAN 同期はサーバーが配信するページで行う。
 - localStorage はオリジン単位。GitHub Pages 版と LAN 版は別データになり、同期コード/QR/ファイルで橋渡しする。
 
-## キー操作（Web `KEYMAP` in script.js ⇔ TUI `HELP` in tui.rs を揃える）
+## キー操作
 
-`j/k`（回数可 `5j`）, `gg/G`（`3G`）, `Ctrl-d/u`, `h/l`・Tab（ぶんしょう⇄もんだい）, `Enter/Space/za` 答え表示, `zR/zM`, `c` OK（再度で取消）, `u` 元に戻す, `o/a/i` 登録, `e` 編集, `dd`/`x` 削除, `/` `n/N` 検索, `t` 今日⇄全部, `r` シャッフル, `s` 同期, `:` コマンド（`:sync :qr :scan :date :set n=… :all :today :stats :q`）, `?` ヘルプ。
-`c`（OK）は元のアプリからのキーなので変えない。Web では入力欄フォーカス中・IME 変換中（`isComposing`/keyCode 229）はキーを奪わない。
+- **Web はオリジナルと同じ `j` / `k` / `Enter` / `c`（+ `Esc` で入力欄から抜ける・ダイアログを閉じる）だけ。モード切替なし。** 利用者は Vimium 等のブラウザ拡張を使うので、一文字キーを増やさない（以前 vim 風キーを足して `x`・`t`・`u`・`d`・`/`・`?` などが Vimium と衝突した）。追加機能はボタンで提供する（↶ 元に戻す、今日⇄全部、全部表示の ✎/🗑 と絞り込み、スマホの ⋯ メニュー）。
+- キーで動かす選択（フォーカス）は一問一答だけ。ぶんしょうは各行の Done チェック（スマホは右スワイプ）で完了にする。
+- 入力欄フォーカス中（チェックボックス等は除く）・IME 変換中（`isComposing`/keyCode 229）はキーを奪わない。フォームの Enter は「次の欄 / 最後の欄で登録」。
+- **TUI（`cli/src/tui.rs`）は vim 風のまま**（端末なので Vimium と無関係）: `j/k`・回数・`gg/G`・`h/l` でペイン切替・`c`・`u`・`o`・`e`・`dd`・`/`・`t`・`:` コマンド・`?`。キー一覧は `HELP` 定数と README の「TUI のキー操作」を揃える。
 
 ## 開発コマンド
 

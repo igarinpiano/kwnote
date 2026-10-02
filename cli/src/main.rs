@@ -58,7 +58,7 @@ enum Cmd {
         #[arg(num_args = 4, value_names = ["N1", "N2", "N3", "N4"])]
         n: Option<Vec<i64>>,
     },
-    /// Write the data as JSON (same format as the web app's EXPORT)
+    /// Write the data as JSON (same format as the web app's SAVE FILE)
     Export {
         #[arg(short, long)]
         output: Option<PathBuf>,
@@ -70,7 +70,7 @@ enum Cmd {
         #[arg(long)]
         replace: bool,
     },
-    /// Print the text sync code (paste it into the web app's LOAD box)
+    /// Print the text sync code (paste it into the web app's PASTE CODE dialog)
     Code {
         #[arg(long, default_value_t = codec::DEFAULT_CHUNK)]
         chunk: usize,

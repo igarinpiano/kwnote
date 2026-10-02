@@ -77,15 +77,14 @@ function nextTurn(entity, settings){
 
 // ---- 画面の状態 ----
 // pane: "reading"（ぶんしょう） / "qa"（一問一答）
+// 選択（フォーカス）があるのは一問一答だけ。ぶんしょうは行ごとのチェックで完了にする。
 var panes = {
-  reading: { due:[], sel:null, all:false },  // due: [{id, turn}] 本日分として固定されたリスト
-  qa:      { due:[], sel:null, all:false }
+  reading: { due:[], all:false, filter:"" },           // due: [{id, turn}] 本日分として固定されたリスト
+  qa:      { due:[], all:false, filter:"", sel:null }
 };
-var focusPane = "qa";
 var revealState = {};
 var undoStack = [];          // [{pane, before}] 直前の状態
 var editing = null;          // {pane, id, prevRegDate}
-var lastSearch = null;
 
 function computeDueList(items, settings, today){
   var list = [];
@@ -108,10 +107,8 @@ function refreshDueList(){
   panes.qa.due = computeDueList(loadItems(), settings, today);
   panes.reading.due = computeDueList(loadSentences(), settings, today);
   revealState = {};
-  ["reading", "qa"].forEach(function(p){
-    var rows = paneRows(p);
-    panes[p].sel = rows.length ? rows[0].id : null;
-  });
+  var rows = paneRows("qa");
+  panes.qa.sel = rows.length ? rows[0].id : null;
 }
 
 // After a save/sync: keep today's order, drop deleted, append newly due.
@@ -128,12 +125,16 @@ function reconcileDueLists(){
       if(t && !have[r.id]) due.push({id:r.id, turn:t});
     });
     panes[p].due = due;
-    var rows = paneRows(p);
-    if(!rows.some(function(r){ return r.id === panes[p].sel; })) panes[p].sel = rows.length ? rows[0].id : null;
   });
+  var rows = paneRows("qa");
+  if(!rows.some(function(r){ return r.id === panes.qa.sel; })) panes.qa.sel = rows.length ? rows[0].id : null;
 }
 
-// Rows currently shown in a pane: today's list, or every record ("t").
+function haystack(p, r){
+  return (p === "qa" ? [r.question, r.answer, r.note].join("\n") : r.text || "").toLowerCase();
+}
+
+// Rows currently shown in a pane: today's list, or every record (全部 view, filterable).
 function paneRows(p, recs){
   recs = recs || loadRecords(p);
   var byId = {};
@@ -144,8 +145,10 @@ function paneRows(p, recs){
       return {id:e.id, turn:e.turn, rec:r, done:(r.completedTurns || []).indexOf(e.turn) !== -1};
     });
   }
-  var settings = loadSettings();
-  return recs.filter(alive).map(function(r){
+  var settings = loadSettings(), pat = panes[p].filter.trim().toLowerCase();
+  return recs.filter(alive).filter(function(r){
+    return !pat || haystack(p, r).indexOf(pat) !== -1;
+  }).map(function(r){
     var nx = nextTurn(r, settings);
     return {id:r.id, turn:nx ? nx.turn : null, sched:nx ? nx.date : null, rec:r, done:false};
   }).sort(function(a, b){
@@ -180,6 +183,25 @@ function el(tag, cls, text){
   return e;
 }
 
+// 表の見出し: 今日の分はオリジナルどおり。ぶんしょうには完了チェック列、全部表示には操作列が付く。
+function renderHead(p){
+  var all = panes[p].all, cols;
+  if(p === "qa"){
+    cols = [["turn", "Turn"], ["question", "Que."], ["answer", "Ans."], ["note", "Sup."]];
+    if(all) cols.push(["actions", ""]);
+  } else {
+    cols = [["turn", "Turn"], ["sentence", "Sentences"]];
+    cols.push(all ? ["actions", ""] : ["done", "Done"]);
+  }
+  var table = document.getElementById(p + "-tbody").parentNode;
+  table.classList.toggle("with-extra", cols.length > (p === "qa" ? 4 : 2));
+  var tr = el("tr", "qa-row");
+  cols.forEach(function(c){ tr.appendChild(el("th", "qa-cell qa-cell-" + c[0], c[1])); });
+  var thead = table.querySelector("thead");
+  thead.innerHTML = "";
+  thead.appendChild(tr);
+}
+
 function turnCell(row, all){
   var td = el("td", "qa-cell qa-cell-turn");
   if(all){
@@ -191,59 +213,70 @@ function turnCell(row, all){
   return td;
 }
 
-function rowElement(p, row){
-  var all = panes[p].all;
-  var tr = el("tr", "qa-row turn-color-" + (row.turn || "done") +
-    (row.done ? " qa-row-done" : "") +
-    (row.id === panes[p].sel ? " selected" + (focusPane === p ? "" : " selected-blur") : ""));
-  tr.dataset.id = row.id;
-  tr.dataset.pane = p;
-  tr.addEventListener("click", function(){ focusPane = p; panes[p].sel = row.id; render(); });
-  tr.appendChild(turnCell(row, all));
-  return tr;
+// 全部表示の行に付く 編集 / 削除 ボタン
+function actionsCell(p, row){
+  var td = el("td", "qa-cell qa-cell-actions");
+  var edit = el("button", "row-btn", "✎");
+  edit.title = "編集 / Edit";
+  edit.addEventListener("click", function(e){ e.stopPropagation(); startEdit(p, row.id); });
+  var del = el("button", "row-btn", "🗑");
+  del.title = "削除 / Delete";
+  del.addEventListener("click", function(e){ e.stopPropagation(); deleteRecord(p, row.id); });
+  td.appendChild(edit);
+  td.appendChild(del);
+  return td;
 }
 
 function render(){
   renderReading();
   renderQa();
   ["reading", "qa"].forEach(function(p){
-    document.getElementById(p + "-head").classList.toggle("pane-focused", focusPane === p);
     var rows = paneRows(p);
     var done = rows.filter(function(r){ return r.done; }).length;
     document.getElementById(p + "-count").textContent = panes[p].all
       ? "全部 " + rows.length + " 件"
       : rows.length ? done + " / " + rows.length : "";
     document.querySelector('.view-toggle[data-pane="' + p + '"]').textContent = panes[p].all ? "全部 → 今日" : "今日 → 全部";
+    var f = document.querySelector('.pane-filter[data-pane="' + p + '"]');
+    f.style.display = panes[p].all ? "" : "none";
+    if(f !== document.activeElement) f.value = panes[p].filter;
   });
+  document.querySelectorAll(".undo-btn").forEach(function(b){ b.disabled = !undoStack.length; });
 }
 // only after keyboard / button navigation, never on background re-renders
 function scrollToSelected(){
-  var sel = document.querySelector("tr.selected:not(.selected-blur)");
+  var sel = document.querySelector("#qa-tbody tr.selected");
   if(sel && sel.scrollIntoView) sel.scrollIntoView({block:"nearest"});
 }
 
 function renderQa(){
+  renderHead("qa");
   var tbody = document.getElementById("qa-tbody");
   tbody.innerHTML = "";
-  var rows = paneRows("qa");
+  var rows = paneRows("qa"), all = panes.qa.all;
   document.getElementById("qa-empty").style.display = rows.length ? "none" : "block";
 
   rows.forEach(function(row){
     var it = row.rec;
-    var tr = rowElement("qa", row);
+    var tr = el("tr", "qa-row turn-color-" + (row.turn || "done") +
+      (row.done ? " qa-row-done" : "") + (row.id === panes.qa.sel ? " selected" : ""));
+    tr.dataset.id = row.id;
+    tr.dataset.pane = "qa";
+    tr.addEventListener("click", function(){ panes.qa.sel = row.id; render(); });
+    tr.appendChild(turnCell(row, all));
 
     var tdQ = document.createElement("td");
     tdQ.className = "qa-cell qa-cell-question";
     tdQ.textContent = it.question;
     tr.appendChild(tdQ);
 
-    var revealed = panes.qa.all || !!revealState[row.id];
+    var revealed = all || !!revealState[row.id];
     var tdA = document.createElement("td");
     tdA.className = "qa-cell qa-cell-answer";
     var ansSpan = document.createElement("span");
     ansSpan.className = revealed ? "answer-visible" : "answer-hidden";
     ansSpan.textContent = revealed ? it.answer : it.answer.replace(/./gs, "＝");
-    ansSpan.addEventListener("click", function(e){ e.stopPropagation(); focusPane = "qa"; panes.qa.sel = row.id; toggleReveal(row.id); });
+    ansSpan.addEventListener("click", function(e){ e.stopPropagation(); panes.qa.sel = row.id; toggleReveal(row.id); });
     tdA.appendChild(ansSpan);
     tr.appendChild(tdA);
 
@@ -252,27 +285,45 @@ function renderQa(){
     tdNote.textContent = revealed ? (it.note || "") : "";
     tr.appendChild(tdNote);
 
+    if(all) tr.appendChild(actionsCell("qa", row));
     tbody.appendChild(tr);
   });
 }
 
 function renderReading(){
+  renderHead("reading");
   var tbody = document.getElementById("reading-tbody");
   tbody.innerHTML = "";
-  var rows = paneRows("reading");
+  var rows = paneRows("reading"), all = panes.reading.all;
   document.getElementById("reading-empty").style.display = rows.length ? "none" : "block";
 
   rows.forEach(function(row){
-    var tr = rowElement("reading", row);
+    var tr = el("tr", "qa-row reading-row turn-color-" + (row.turn || "done") + (row.done ? " qa-row-done" : ""));
+    tr.dataset.id = row.id;
+    tr.dataset.pane = "reading";
+    tr.appendChild(turnCell(row, all));
     var tdText = document.createElement("td");
     tdText.className = "qa-cell qa-cell-sentence";
     tdText.textContent = row.rec.text;
     tr.appendChild(tdText);
+    if(all){
+      tr.appendChild(actionsCell("reading", row));
+    } else {
+      // 読んだらチェック → このターンを完了（もう一度で取消）
+      var td = el("td", "qa-cell qa-cell-done");
+      var box = el("input", "done-check");
+      box.type = "checkbox";
+      box.checked = row.done;
+      box.title = "読んだ / Done";
+      box.addEventListener("change", function(){ markOk(row.id, "reading"); });
+      td.appendChild(box);
+      tr.appendChild(td);
+    }
     tbody.appendChild(tr);
   });
 }
 
-// ---- ステータスバー（vim風） ----
+// ---- メッセージ（XP のツールチップ風） ----
 var msgTimer = null;
 function message(text, isError){
   var m = document.getElementById("sb-msg");
@@ -282,29 +333,15 @@ function message(text, isError){
   clearTimeout(msgTimer);
   if(text) msgTimer = setTimeout(function(){ message(""); }, isError ? 6000 : 3500);
 }
-function updateMode(){
-  var mode = "NORMAL";
-  if(document.getElementById("sb-cmd").style.display !== "none") mode = "COMMAND";
-  else if(isInputFocused()) mode = "INSERT";
-  var m = document.getElementById("sb-mode");
-  m.textContent = mode;
-  m.className = "sb-mode sb-mode-" + mode.toLowerCase();
-}
+// 文字入力中か（チェックボックスやボタンは含めない: j/k/c を奪わないため）
 function isInputFocused(){
   var a = document.activeElement;
   if(!a) return false;
-  var tag = a.tagName;
-  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || a.isContentEditable;
+  if(a.tagName === "INPUT") return !/^(checkbox|radio|button|submit|reset|file|range|color)$/i.test(a.type);
+  return a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable;
 }
 
 // ---- 操作 ----
-function selectedRow(p){
-  p = p || focusPane;
-  var rows = paneRows(p);
-  for(var i = 0; i < rows.length; i++) if(rows[i].id === panes[p].sel) return rows[i];
-  return null;
-}
-
 function toggleReveal(id){
   revealState[id] = !revealState[id];
   render();
@@ -314,7 +351,7 @@ function clone(o){ return JSON.parse(JSON.stringify(o)); }
 // strictly newer than prev: a same-millisecond tie would merge instead of win
 function nextStamp(prev){ return Math.max(Date.now(), (+prev || 0) + 1); }
 
-// Apply fn to the stored record, remember the old one for "u", save.
+// Apply fn to the stored record, remember the old one for undo, save.
 function updateRecord(p, id, fn){
   var list = loadRecords(p);
   var rec = list.find(function(x){ return x.id === id; });
@@ -328,8 +365,8 @@ function updateRecord(p, id, fn){
 }
 
 function markOk(id, p){
-  p = p || focusPane;
-  if(panes[p].all){ message("c は「今日」表示で使えます (t で切替)", true); return; }
+  p = p || "qa";
+  if(panes[p].all){ message("OK は「今日」の表示で使えます", true); return; }
   var entry = panes[p].due.find(function(x){ return x.id === id; });
   if(!entry) return;
   var nowDone = false;
@@ -341,21 +378,21 @@ function markOk(id, p){
   });
   message(nowDone ? "OK — turn " + entry.turn + " done" : "turn " + entry.turn + " を未完了に戻しました");
 
-  // autofocus
-  if(nowDone){
-    var rows = paneRows(p);
+  // autofocus（一問一答のみ）
+  if(nowDone && p === "qa"){
+    var rows = paneRows("qa");
     var curIdx = rows.findIndex(function(x){ return x.id === id; });
     if(curIdx !== -1){
       var n = rows.length;
       for(var d = 1; d < n; d++){
         var prevIdx = curIdx - d;
         if(prevIdx >= 0 && !rows[prevIdx].done){
-          panes[p].sel = rows[prevIdx].id;
+          panes.qa.sel = rows[prevIdx].id;
           break;
         }
         var nextIdx = curIdx + d;
         if(nextIdx < n && !rows[nextIdx].done){
-          panes[p].sel = rows[nextIdx].id;
+          panes.qa.sel = rows[nextIdx].id;
           break;
         }
       }
@@ -367,7 +404,7 @@ function markOk(id, p){
 
 function undo(){
   var u = undoStack.pop();
-  if(!u){ message("Already at oldest change"); return; }
+  if(!u){ message("元に戻せる操作はありません"); render(); return; }
   var list = loadRecords(u.pane);
   var before = u.before;
   var i = list.findIndex(function(x){ return x.id === before.id; });
@@ -375,72 +412,39 @@ function undo(){
   if(i === -1) list.push(before); else list[i] = before;
   saveRecords(u.pane, list);
   reconcileDueLists();
-  focusPane = u.pane;
-  if(paneRows(u.pane).some(function(r){ return r.id === before.id; })) panes[u.pane].sel = before.id;
-  message("元に戻しました (" + undoStack.length + ")");
+  if(u.pane === "qa" && paneRows("qa").some(function(r){ return r.id === before.id; })) panes.qa.sel = before.id;
+  message("元に戻しました");
   render();
 }
 
-function deleteSelected(){
-  var row = selectedRow();
-  if(!row) return;
-  var label = focusPane === "qa" ? row.rec.question : row.rec.text;
+function deleteRecord(p, id){
+  var rec = loadRecords(p).find(function(x){ return x.id === id; });
+  if(!rec) return;
+  var label = p === "qa" ? rec.question : rec.text;
   if(!confirm("削除しますか？ / Delete?\n\n" + label)) return;
-  updateRecord(focusPane, row.id, function(r){ r.deleted = true; });
+  updateRecord(p, id, function(r){ r.deleted = true; });
   reconcileDueLists();
-  message("削除しました（u で元に戻す）");
+  message("削除しました（↶ で元に戻せます）");
   render();
 }
 
-function moveSelection(delta, p){
-  p = p || focusPane;
-  var rows = paneRows(p);
+function moveSelection(delta){
+  var rows = paneRows("qa");
   if(!rows.length) return;
-  var idx = rows.findIndex(function(d){ return d.id === panes[p].sel; });
+  var idx = rows.findIndex(function(d){ return d.id === panes.qa.sel; });
   if(idx === -1) idx = 0;
   idx = Math.max(0, Math.min(rows.length - 1, idx + delta));
-  panes[p].sel = rows[idx].id;
-  render();
-  scrollToSelected();
-}
-function moveTo(idx){
-  var rows = paneRows(focusPane);
-  if(!rows.length) return;
-  idx = Math.max(0, Math.min(rows.length - 1, idx));
-  panes[focusPane].sel = rows[idx].id;
-  render();
-  scrollToSelected();
-}
-function switchPane(p){
-  focusPane = p || (focusPane === "qa" ? "reading" : "qa");
+  panes.qa.sel = rows[idx].id;
   render();
   scrollToSelected();
 }
 function toggleView(p){
-  p = p || focusPane;
   panes[p].all = !panes[p].all;
-  var rows = paneRows(p);
-  panes[p].sel = rows.length ? rows[0].id : null;
-  render();
-}
-function search(forward){
-  if(!lastSearch){ message("no previous search pattern", true); return; }
-  var pat = lastSearch.toLowerCase();
-  var rows = paneRows(focusPane), n = rows.length;
-  var cur = Math.max(0, rows.findIndex(function(r){ return r.id === panes[focusPane].sel; }));
-  for(var step = 1; step <= n; step++){
-    var i = forward ? (cur + step) % n : (cur - step + n * 2) % n;
-    var r = rows[i].rec;
-    var hay = (focusPane === "qa" ? [r.question, r.answer, r.note].join("\n") : r.text || "").toLowerCase();
-    if(hay.indexOf(pat) !== -1){
-      panes[focusPane].sel = rows[i].id;
-      message("/" + lastSearch + (step === n ? "  (only match)" : ""));
-      render();
-      scrollToSelected();
-      return;
-    }
+  if(p === "qa"){
+    var rows = paneRows("qa");
+    panes.qa.sel = rows.length ? rows[0].id : null;
   }
-  message("Pattern not found: " + lastSearch, true);
+  render();
 }
 
 // ---- 登録・編集フォーム ----
@@ -449,20 +453,12 @@ function formFields(p){
     ? ["input-question", "input-answer", "input-note"]
     : ["new-sentence-input"];
 }
-function startInsert(p){
-  p = p || focusPane;
-  if(editing && editing.pane !== p) cancelEdit();
-  var first = document.getElementById(formFields(p)[0]);
-  first.focus();
-  first.scrollIntoView({block:"center"});
-}
-function startEdit(){
-  var row = selectedRow();
-  if(!row){ message("nothing selected", true); return; }
+function startEdit(p, id){
+  var r = loadRecords(p).find(function(x){ return x.id === id; });
+  if(!r) return;
   cancelEdit();
-  var p = focusPane, r = row.rec;
   var reg = document.getElementById("reg-date-input");
-  editing = {pane:p, id:row.id, prevRegDate:reg.value};
+  editing = {pane:p, id:id, prevRegDate:reg.value};
   reg.value = r.registeredDate;
   if(p === "qa"){
     document.getElementById("input-question").value = r.question;
@@ -472,8 +468,11 @@ function startEdit(){
     document.getElementById("new-sentence-input").value = r.text;
   }
   setFormMode(p, true);
-  startInsert(p);
+  var first = document.getElementById(formFields(p)[0]);
+  first.focus();
+  first.scrollIntoView({block:"center"});
 }
+
 function setFormMode(p, isEdit){
   var btn = document.getElementById(p === "qa" ? "add-qa-btn" : "add-sentence-btn");
   btn.textContent = isEdit ? "UPDATE" : "REGISTER";
@@ -598,6 +597,7 @@ document.getElementById("save-settings-btn").addEventListener("click", function(
 });
 loadSettingsToForm();
 
+
 // ---- 同期 ----
 var syncTimer = null, syncing = false, syncAgain = false, suppressAutoSync = false;
 
@@ -697,19 +697,51 @@ document.getElementById("qr-scan-btn").addEventListener("click", scanSyncQr);
 
 function copyText(text){
   if(navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
-  var area = document.getElementById("backup-area");
+  var area = el("textarea");
   area.value = text;
+  area.style.position = "fixed"; area.style.opacity = "0";
+  document.body.appendChild(area);
   area.select();
-  try{ document.execCommand("copy"); }catch(e){}
-  area.blur();
-  return Promise.resolve();
+  var ok = false;
+  try{ ok = document.execCommand("copy"); }catch(e){}
+  area.remove();
+  return ok ? Promise.resolve() : Promise.reject(new Error("clipboard unavailable"));
+}
+// コード（または JSON）を表示・入力する小さなダイアログ
+function codeDialog(title, value, onLoad){
+  var d = KWSync.dialog(title);
+  var area = el("textarea", "code-area");
+  area.value = value || "";
+  area.placeholder = "KW1:… の同期コード、または EXPORT / SAVE FILE の JSON を貼り付け";
+  d.body.appendChild(area);
+  if(onLoad){
+    var btn = el("button", "", "LOAD（マージ）");
+    btn.addEventListener("click", function(){ onLoad(area.value.trim()); });
+    d.body.appendChild(btn);
+    setTimeout(function(){ area.focus(); }, 0);
+  } else {
+    d.body.appendChild(el("p", "modal-hint", "自動でコピーできなかったので、全選択してコピーしてください。"));
+    setTimeout(function(){ area.focus(); area.select(); }, 0);
+  }
 }
 document.getElementById("code-copy-btn").addEventListener("click", function(){
   KWSync.encodeFrames(getDoc(), 100000).then(function(frames){
     var code = frames.join("\n");
-    document.getElementById("backup-area").value = code;
-    return copyText(code).then(function(){ message("同期コードをコピーしました（相手の LOAD に貼り付け）"); });
+    return copyText(code).then(function(){
+      message("同期コードをコピーしました（相手の PASTE CODE に貼り付け）");
+    }, function(){ codeDialog("Sync code", code, null); });
   }).catch(function(err){ message("コピー失敗: " + err.message, true); });
+});
+document.getElementById("code-paste-btn").addEventListener("click", function(){
+  codeDialog("Paste code", "", function(raw){
+    if(!raw) return;
+    KWSync.decodeAny(raw).then(function(data){
+      KWSync.closeDialog();
+      mergeIncoming(data);
+      scheduleAutoSync();
+      message("読み込みました（マージ）");
+    }).catch(function(e){ message("読み込み失敗: " + e.message, true); });
+  });
 });
 
 function backupFileName(){ return "kwnote-" + todayStr() + ".json"; }
@@ -745,70 +777,44 @@ document.getElementById("file-input").addEventListener("change", function(){
   });
 })();
 
-// ---- バックアップ ----
-document.getElementById("export-btn").addEventListener("click", function(){
-  document.getElementById("backup-area").value = JSON.stringify(getDoc(), null, 2);
-});
-document.getElementById("import-btn").addEventListener("click", function(){
-  var raw = document.getElementById("backup-area").value.trim();
-  if(!raw) return;
-  KWSync.decodeAny(raw).then(function(data){
-    mergeIncoming(data);
-    scheduleAutoSync();
-    message("読み込みました（マージ）");
-  }).catch(function(e){
-    alert("JSONの読み込みに失敗しました：" + e.message);
-  });
-});
-document.getElementById("replace-btn").addEventListener("click", function(){
-  var raw = document.getElementById("backup-area").value.trim();
-  if(!raw) return;
-  if(!confirm("現在のデータを置き換えます。よろしいですか？\nReplace all local data?")) return;
-  KWSync.decodeAny(raw).then(function(data){
-    if(data.items) saveItems(data.items);
-    if(data.settings) saveSettings(data.settings);
-    if(data.sentences) saveSentences(data.sentences);
-    loadSettingsToForm();
-    doRefresh();
-  }).catch(function(e){
-    alert("JSONの読み込みに失敗しました：" + e.message);
-  });
-});
-
 // ---- モバイル操作ボタン ----
 document.getElementById("m-up").addEventListener("click", function(){ moveSelection(-1); });
 document.getElementById("m-down").addEventListener("click", function(){ moveSelection(1); });
-document.getElementById("m-pane").addEventListener("click", function(){ switchPane(); });
-document.getElementById("m-show").addEventListener("click", function(){
-  if(focusPane !== "qa"){ message("ぶんしょうには隠れた答えがありません"); return; }
-  if(panes.qa.sel) toggleReveal(panes.qa.sel);
-});
-document.getElementById("m-ok").addEventListener("click", function(){ if(panes[focusPane].sel) markOk(panes[focusPane].sel); });
+document.getElementById("m-show").addEventListener("click", function(){ if(panes.qa.sel) toggleReveal(panes.qa.sel); });
+document.getElementById("m-ok").addEventListener("click", function(){ if(panes.qa.sel) markOk(panes.qa.sel, "qa"); });
 document.getElementById("m-undo").addEventListener("click", undo);
 document.getElementById("m-more").addEventListener("click", function(){
   var d = KWSync.dialog("Menu");
   [
-    ["✎ 編集 / Edit (e)", startEdit],
-    ["🗑 削除 / Delete (dd)", deleteSelected],
-    [panes[focusPane].all ? "今日の分を表示 / Today (t)" : "全部を表示 / All records (t)", function(){ toggleView(); }],
-    ["⟳ LAN同期 / Sync (s)", function(){ syncNow(false); }],
+    [panes.qa.all ? "もんだい: 今日の分を表示" : "もんだい: 全部を表示（編集・削除）", function(){ toggleView("qa"); }],
+    [panes.reading.all ? "ぶんしょう: 今日の分を表示" : "ぶんしょう: 全部を表示（編集・削除）", function(){ toggleView("reading"); }],
+    ["⟳ LAN同期 / Sync", function(){ syncNow(false); }],
     ["▦ QRを表示 / Show QR", showSyncQr],
-    ["⌖ QRを読む / Scan QR", scanSyncQr],
-    ["？ キー一覧 / Keys (?)", showHelp]
+    ["⌖ QRを読む / Scan QR", scanSyncQr]
   ].forEach(function(a){
     var b = el("button", "menu-item", a[0]);
     b.addEventListener("click", function(){ KWSync.closeDialog(); a[1](); });
     d.body.appendChild(b);
   });
 });
+
+// ---- 見出しのボタン（元に戻す / 今日⇄全部 / 全部表示での絞り込み） ----
 document.querySelectorAll(".view-toggle").forEach(function(b){
-  b.addEventListener("click", function(){ focusPane = b.dataset.pane; toggleView(b.dataset.pane); });
+  b.addEventListener("click", function(){ toggleView(b.dataset.pane); });
 });
-document.querySelectorAll(".pane-head").forEach(function(h){
-  h.addEventListener("click", function(e){ if(e.target.tagName !== "BUTTON") switchPane(h.dataset.pane); });
+document.querySelectorAll(".undo-btn").forEach(function(b){ b.addEventListener("click", undo); });
+document.querySelectorAll(".pane-filter").forEach(function(f){
+  f.addEventListener("input", function(){
+    panes[f.dataset.pane].filter = f.value;
+    if(f.dataset.pane === "qa"){
+      var rows = paneRows("qa");
+      if(!rows.some(function(r){ return r.id === panes.qa.sel; })) panes.qa.sel = rows.length ? rows[0].id : null;
+    }
+    render();
+  });
 });
 
-// ---- スワイプ（右: Sure / 左: Show） ----
+// ---- スワイプ（右: Sure / 左: Show。ぶんしょうは右で完了） ----
 ["reading-tbody", "qa-tbody"].forEach(function(id){
   var tbody = document.getElementById(id), sx = 0, sy = 0, tr = null;
   tbody.addEventListener("touchstart", function(e){
@@ -828,220 +834,37 @@ document.querySelectorAll(".pane-head").forEach(function(h){
     var t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
     if(Math.abs(dx) < 70 || Math.abs(dy) > 45) return;
     var p = row.dataset.pane, rid = row.dataset.id;
-    focusPane = p; panes[p].sel = rid;
+    if(p === "qa") panes.qa.sel = rid;
     if(dx > 0) markOk(rid, p);
     else if(p === "qa") toggleReveal(rid);
-    else render();
   });
 });
 
-// ---- キーボード操作（vim風） ----
-// Kept in step with the Rust TUI (cli/src/tui.rs).
-var KEYMAP = [
-  ["移動", ""],
-  ["j / k  ↓ / ↑", "次 / 前の行（5j のように回数指定可）"],
-  ["gg / G", "先頭 / 末尾（3G で3行目）"],
-  ["Ctrl-d / Ctrl-u", "半ページ下 / 上"],
-  ["h / l  Tab", "ぶんしょう ⇄ もんだい を切替"],
-  ["復習", ""],
-  ["Enter / Space / za", "答えの表示 / 非表示"],
-  ["zR / zM", "すべて表示 / すべて隠す"],
-  ["c", "OK（このターンを完了。もう一度で取消）"],
-  ["u", "直前の変更を元に戻す（OK・編集・削除）"],
-  ["r", "今日の一覧をシャッフルし直す"],
-  ["t", "表示切替: 今日 ⇄ 全部"],
-  ["編集", ""],
-  ["o / a / i", "新規登録（入力欄へ）"],
-  ["e", "選択中の項目を編集"],
-  ["dd / x", "選択中の項目を削除"],
-  ["/文字列  n / N", "検索・次 / 前"],
-  ["入力中", "Enter: 次の欄・最後で登録 / Ctrl+Enter: 登録 / Esc: 抜ける"],
-  ["同期", ""],
-  ["s", "LANサーバーと同期"],
-  [":qr  :scan", "QRを表示 / 読み取り"],
-  [":コマンド", ""],
-  [":sync  :export  :stats", "同期 / 書き出し / 統計"],
-  [":date 2026-10-01 / +N / -N / today", "基準日を変更"],
-  [":set n=1,3,7,14", "復習間隔（:set n2=4 も可）"],
-  [":all  :today", "表示切替"],
-  ["?", "このヘルプ"]
-];
-function showHelp(){
-  var d = KWSync.dialog("Keys — vim風キー操作");
-  var t = el("table", "help-table");
-  KEYMAP.forEach(function(k){
-    var tr = el("tr");
-    if(!k[1]){ var th = el("th", "", k[0]); th.colSpan = 2; tr.appendChild(th); }
-    else { tr.appendChild(el("td", "help-key", k[0])); tr.appendChild(el("td", "", k[1])); }
-    t.appendChild(tr);
-  });
-  d.body.appendChild(t);
-  d.body.appendChild(el("p", "modal-hint", "CLI 版（kwnote）も同じキーで動きます。"));
-}
-
-// ':' / '/' command line
-var cmdMode = null;
-function openCmdline(kind){
-  cmdMode = kind;
-  document.getElementById("sb-cmd-prefix").textContent = kind === "search" ? "/" : ":";
-  document.getElementById("sb-cmd").style.display = "";
-  document.getElementById("sb-msg").style.display = "none";
-  var c = document.getElementById("cmdline");
-  c.value = "";
-  c.focus();
-  updateMode();
-}
-function closeCmdline(){
-  cmdMode = null;
-  document.getElementById("sb-cmd").style.display = "none";
-  document.getElementById("sb-msg").style.display = "";
-  document.getElementById("cmdline").blur();
-  updateMode();
-}
-document.getElementById("cmdline").addEventListener("keydown", function(e){
-  if(e.isComposing || e.keyCode === 229) return;
-  if(e.key === "Escape" || (e.key === "Backspace" && !this.value)){ e.preventDefault(); closeCmdline(); return; }
-  if(e.key !== "Enter") return;
-  e.preventDefault();
-  var v = this.value.trim(), kind = cmdMode;
-  closeCmdline();
-  if(kind === "search"){ if(v) lastSearch = v; search(true); }
-  else runCommand(v);
-});
-document.getElementById("cmdline").addEventListener("blur", function(){ if(cmdMode) closeCmdline(); });
-
-function runCommand(cmd){
-  var parts = cmd.split(/\s+/), head = parts[0], arg = parts.slice(1).join(" ");
-  switch(head){
-    case "": return;
-    case "q": case "q!": case "wq": case "x": case "quit":
-      message("ブラウザ版は閉じられません :)  (it's a web page)"); return;
-    case "w": case "write": message("保存済み（変更は自動保存されます）"); scheduleAutoSync(); return;
-    case "sync": syncNow(false); return;
-    case "qr": showSyncQr(); return;
-    case "scan": scanSyncQr(); return;
-    case "export": document.getElementById("export-btn").click(); document.getElementById("backup-area").scrollIntoView({block:"center"}); return;
-    case "all": panes.reading.all = panes.qa.all = true; render(); return;
-    case "today": panes.reading.all = panes.qa.all = false; reconcileDueLists(); render(); return;
-    case "help": case "h": showHelp(); return;
-    case "e!": case "reload": doRefresh(); return;
-    case "stats": {
-      var s = loadSettings(), today = getToday(), tomorrow = addDays(today, 1);
-      var items = loadItems().filter(alive), sents = loadSentences().filter(alive);
-      var all = items.concat(sents);
-      message("Q&A " + items.length + "（今日 " + items.filter(function(r){ return dueTurn(r, s, today); }).length +
-        "）· ぶんしょう " + sents.length + "（今日 " + sents.filter(function(r){ return dueTurn(r, s, today); }).length +
-        "）· 明日 " + all.filter(function(r){ return !dueTurn(r, s, today) && dueTurn(r, s, tomorrow); }).length +
-        " · 完了 " + all.filter(function(r){ return !nextTurn(r, s); }).length);
-      return;
-    }
-    case "date": {
-      var base = getToday(), d = null;
-      if(!arg || arg === "today") d = todayStr();
-      else if(/^[+-]\d+$/.test(arg)) d = addDays(base, parseInt(arg, 10));
-      else if(/^\d{4}-\d{2}-\d{2}$/.test(arg)) d = arg;
-      if(!d){ message("usage: :date YYYY-MM-DD | today | +N | -N", true); return; }
-      document.getElementById("today-date-input").value = d;
-      doRefresh();
-      message("基準日 " + d);
-      return;
-    }
-    case "set": {
-      var n = loadSettings().n.slice(), m;
-      if(!arg){ message("n=" + n.join(",")); return; }
-      if((m = /^n=(\d+),(\d+),(\d+),(\d+)$/.exec(arg.replace(/\s/g, "")))) n = m.slice(1, 5).map(Number);
-      else if((m = /^n([1-4])=(\d+)$/.exec(arg.replace(/\s/g, "")))) n[+m[1] - 1] = +m[2];
-      else { message("usage: :set n=1,3,7,14  or  :set n2=4", true); return; }
-      applySettings(n);
-      message("intervals " + n.join(","));
-      return;
-    }
-  }
-  message("E492: Not an editor command: " + cmd, true);
-}
-
-var pendingKey = null, countBuf = "";
-function showKeys(){ document.getElementById("sb-keys").textContent = countBuf + (pendingKey || ""); }
-
+// ---- キーボード操作 ----
+// オリジナルと同じ j / k / Enter / c だけ（Vimium と競合しないよう、ほかの一文字キーは使わない）。
 document.addEventListener("keydown", function(e){
   if(e.isComposing || e.keyCode === 229) return;
   if(KWSync.isDialogOpen()){ KWSync.dialogKey(e); return; }
-
   if(e.key === "Escape"){
     e.preventDefault();
     if(editing && isInputFocused()) cancelEdit();
     if(document.activeElement) document.activeElement.blur();
-    pendingKey = null; countBuf = ""; showKeys();
-    updateMode();
     return;
   }
 
   if(isInputFocused()) return;
-  if(e.altKey || e.metaKey) return;
-  var k = e.key, ctrl = e.ctrlKey;
+  if(e.ctrlKey || e.metaKey || e.altKey) return;
+  if(!paneRows("qa").length) return;
 
-  if(pendingKey){
-    var p = pendingKey, cnt = countBuf ? parseInt(countBuf, 10) : null;
-    pendingKey = null; countBuf = ""; showKeys();
-    e.preventDefault();
-    if(p === "g" && k === "g") moveTo(cnt ? cnt - 1 : 0);
-    else if(p === "d" && k === "d") deleteSelected();
-    else if(p === "z" && k === "a"){ if(focusPane === "qa" && panes.qa.sel) toggleReveal(panes.qa.sel); }
-    else if(p === "z" && k === "R"){ paneRows("qa").forEach(function(r){ revealState[r.id] = true; }); render(); }
-    else if(p === "z" && k === "M"){ revealState = {}; render(); }
-    return;
-  }
-  if(!ctrl && /^[0-9]$/.test(k) && (k !== "0" || countBuf)){
-    countBuf += k; showKeys(); e.preventDefault(); return;
-  }
-  var count = countBuf ? parseInt(countBuf, 10) : null, n = count || 1;
-  countBuf = ""; showKeys();
-  var half = Math.max(1, Math.floor(paneRows(focusPane).length / 2));
-
-  var handled = true;
-  if(ctrl){
-    if(k === "d") moveSelection(Math.min(10, half) * n);
-    else if(k === "u") moveSelection(-Math.min(10, half) * n);
-    else if(k === "n") moveSelection(n);
-    else if(k === "p") moveSelection(-n);
-    else if(k === "Enter"){ /* noop */ }
-    else handled = false;
-  }
-  else if(k === "j" || k === "ArrowDown") moveSelection(n);
-  else if(k === "k" || k === "ArrowUp") moveSelection(-n);
-  else if(k === "G" || k === "End") moveTo(count ? count - 1 : 1e9);
-  else if(k === "Home") moveTo(0);
-  else if(k === "g" || k === "d" || k === "z"){ pendingKey = k; if(count) countBuf = String(count); showKeys(); }
-  else if(k === "h" || k === "ArrowLeft") switchPane("reading");
-  else if(k === "l" || k === "ArrowRight") switchPane("qa");
-  else if(k === "Tab") switchPane();
-  else if(k === "Enter" || k === " "){
-    if(focusPane === "qa"){ if(panes.qa.sel) toggleReveal(panes.qa.sel); }
-    else message("ぶんしょうには隠れた答えがありません — 読んだら c");
-  }
-  else if(k === "c" || k === "C"){ if(panes[focusPane].sel) markOk(panes[focusPane].sel); }
-  else if(k === "u") undo();
-  else if(k === "x") deleteSelected();
-  else if(k === "o" || k === "O" || k === "a" || k === "A" || k === "i" || k === "I") startInsert();
-  else if(k === "e") startEdit();
-  else if(k === "r"){ doRefresh(); message("シャッフルしました"); }
-  else if(k === "t") toggleView();
-  else if(k === "/") openCmdline("search");
-  else if(k === "n") search(true);
-  else if(k === "N") search(false);
-  else if(k === ":" || (k === ";" && e.shiftKey)) openCmdline("command");
-  else if(k === "?") showHelp();
-  else if(k === "s") syncNow(false);
-  else handled = false;
-  if(handled) e.preventDefault();
+  if(e.key === "j"){ e.preventDefault(); moveSelection(1); }
+  else if(e.key === "k"){ e.preventDefault(); moveSelection(-1); }
+  else if(e.key === "Enter"){ e.preventDefault(); if(panes.qa.sel) toggleReveal(panes.qa.sel); }
+  else if(e.key === "c" || e.key === "C"){ e.preventDefault(); if(panes.qa.sel) markOk(panes.qa.sel, "qa"); }
 });
-document.addEventListener("focusin", updateMode);
-document.addEventListener("focusout", function(){ setTimeout(updateMode, 0); });
 
 // ---- 起動 ----
 refreshDueList();
 render();
-updateMode();
 describeServer();
 function pairWithServer(){
   return KWSync.detectServer().then(function(cfg){

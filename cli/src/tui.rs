@@ -1,6 +1,7 @@
 //! Full-screen review UI with vim-style key bindings.
-//! The key map mirrors the web app (see `KEYMAP` in ../../script.js); keep the
-//! two in step when changing either.
+//! (The web app deliberately uses only the original j / k / Enter / c so it
+//! does not collide with browser extensions such as Vimium; the terminal UI
+//! keeps the full vim-style map. Keep `HELP` in step with README.)
 
 use std::collections::HashSet;
 use std::io::stdout;

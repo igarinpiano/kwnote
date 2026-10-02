@@ -219,7 +219,7 @@
     win.appendChild(bar); win.appendChild(body); back.appendChild(win);
     back.addEventListener("click", function(e){ if(e.target === back) closeDialog(); });
     document.body.appendChild(back);
-    activeDialog = {root: back, body: body, cleanup: [], keys: null};
+    activeDialog = {root: back, body: body, cleanup: []};
     return activeDialog;
   }
   function closeDialog(){
@@ -229,11 +229,11 @@
     d.cleanup.forEach(function(f){ try{ f(); }catch(e){} });
     d.root.remove();
   }
-  // Lets script.js route keys to an open dialog. Returns true if consumed.
+  // Lets script.js route keys to an open dialog: only Esc (closes it), so
+  // nothing collides with browser extensions such as Vimium.
   function dialogKey(e){
     if(!activeDialog) return false;
-    if(e.key === "Escape" || e.key === "q"){ e.preventDefault(); closeDialog(); return true; }
-    if(activeDialog.keys){ activeDialog.keys(e); }
+    if(e.key === "Escape"){ e.preventDefault(); closeDialog(); }
     return true;
   }
 
@@ -272,13 +272,6 @@
     bPause.onclick = function(){ paused = !paused; paint(); loop(); };
     bSlow.onclick = function(){ speed(100); };
     bFast.onclick = function(){ speed(-100); };
-    d.keys = function(e){
-      if(e.key === "h" || e.key === "ArrowLeft") step(-1);
-      else if(e.key === "l" || e.key === "ArrowRight") step(1);
-      else if(e.key === " "){ e.preventDefault(); paused = !paused; paint(); loop(); }
-      else if(e.key === "+" || e.key === "=") speed(-100);
-      else if(e.key === "-") speed(100);
-    };
     d.cleanup.push(function(){ clearTimeout(timer); });
     paint(); loop();
   }
@@ -315,7 +308,7 @@
     d.body.appendChild(video); d.body.appendChild(bar); d.body.appendChild(grid); d.body.appendChild(status);
 
     if(!global.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-      status.textContent = "カメラは https または localhost でのみ使えます。LAN同期か COPY CODE / LOAD を使ってください。";
+      status.textContent = "カメラは https または localhost でのみ使えます。LAN同期か COPY CODE / PASTE CODE を使ってください。";
       video.remove(); bar.remove();
       return;
     }
