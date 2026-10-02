@@ -64,3 +64,33 @@ jobs:
           node tests/qr_crosscheck.mjs "$RUNNER_TEMP/qr.json"
       - name: Sync codes and merge rules agree (JS <-> Rust)
         run: node tests/sync_interop.mjs
+
+  installers:
+    name: Installer (${{ matrix.os }})
+    # installs the *published* latest release, exactly like the README one-liners
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      GITHUB_TOKEN: ${{ github.token }}  # API rate limit for `kwnote update --check`
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        if: runner.os == 'Linux'
+        run: shellcheck -S warning install.sh
+      - name: install.sh | sh
+        if: runner.os != 'Windows'
+        run: |
+          KWNOTE_INSTALL_DIR="$RUNNER_TEMP/bin" sh < install.sh
+          "$RUNNER_TEMP/bin/kwnote" --version
+          "$RUNNER_TEMP/bin/kwnote" update --check
+      - name: install.ps1 | iex
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:KWNOTE_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'kwbin'
+          Get-Content -Raw install.ps1 | Invoke-Expression
+          & (Join-Path $env:KWNOTE_INSTALL_DIR 'kwnote.exe') --version
+          & (Join-Path $env:KWNOTE_INSTALL_DIR 'kwnote.exe') update --check
