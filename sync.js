@@ -245,7 +245,9 @@
     var info = el("div", "qr-info");
     var ctrl = el("div", "qr-controls");
     var bPrev = el("button", "", "◀"), bPause = el("button", "", "❚❚"), bNext = el("button", "", "▶");
-    var bSlow = el("button", "", "−"), bFast = el("button", "", "+");
+    // 速さの操作（間隔の数字の増減と取り違えないよう、記号ではなく言葉で）
+    var bSlow = el("button", "", "遅く"), bFast = el("button", "", "速く");
+    bSlow.title = "Slower"; bFast.title = "Faster";
     [bPrev, bPause, bNext, bSlow, bFast].forEach(function(b){ ctrl.appendChild(b); });
     var hint = el("p", "modal-hint", opts.hint ||
       "受け取る端末で「SCAN QR」を押してこの画面を映してください。コードは自動で切り替わり、順不同で集まれば完了します。");

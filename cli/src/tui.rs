@@ -1635,7 +1635,7 @@ fn draw_qr(f: &mut Frame, q: &QrView) {
     let need_w = block.width() as u16;
     let need_h = block.height_lines() as u16 + 2;
     let caption = format!(
-        " frame {}/{}{}  ·  space pause · h/l step · +/- speed ({} ms) · q close ",
+        " frame {}/{}{}  ·  space pause · h/l step · + faster · - slower ({} ms) · q close ",
         q.idx + 1,
         q.blocks.len(),
         if q.paused { " (paused)" } else { "" },
