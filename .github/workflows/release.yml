@@ -128,10 +128,13 @@ jobs:
           "$bin" --data "$RUNNER_TEMP/kw.json" list --all | grep -q smoke
       - name: Smoke test (QEMU)
         if: matrix.run == 'cross'
+        # every `cross run` is a fresh container: keep the data file in the
+        # mounted workspace so it survives from `add` to `list`
         run: |
+          rm -f smoke-kw.json
           cross run --release --locked -p kwnote --target ${{ matrix.target }} -- --version
-          cross run --release --locked -p kwnote --target ${{ matrix.target }} -- --data /tmp/kw.json add qa smoke test
-          cross run --release --locked -p kwnote --target ${{ matrix.target }} -- --data /tmp/kw.json list --all | tee /dev/stderr | grep -q smoke
+          cross run --release --locked -p kwnote --target ${{ matrix.target }} -- --data smoke-kw.json add qa smoke test
+          cross run --release --locked -p kwnote --target ${{ matrix.target }} -- --data smoke-kw.json list --all | tee /dev/stderr | grep -q smoke
       - uses: actions/upload-artifact@v4
         with:
           name: kwnote-${{ matrix.target }}
