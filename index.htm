@@ -30,14 +30,13 @@
 
 <div style="padding:15pt" class="page">
 <!--<h1 class="app-title">記憶支援システム</h1>-->
-<p class="app-hint desktop-only">j/k:選択移動　Enter:答えトグル　C:OK（入力欄フォーカス中は無効）</p>
+<p class="app-hint desktop-only">j/k:選択移動　Shift+J/K:もんだい/ぶんしょう切替　Enter:答えトグル　C:OK（入力欄フォーカス中は無効）</p>
 
 <br>
   <div class="pane-head" id="reading-head" data-pane="reading">
     <p class="section-title">今日のぶんしょう：<span class="pane-count" id="reading-count"></span></p>
     <div class="pane-tools">
       <input type="search" class="pane-filter" data-pane="reading" placeholder="検索 / Filter" style="display:none;">
-      <button class="undo-btn" title="元に戻す / Undo" disabled>↶</button>
       <button class="view-toggle" data-pane="reading">今日 / 全部</button>
     </div>
   </div>
@@ -60,7 +59,6 @@
     <p class="section-title">今日のもんだい：<span class="pane-count" id="qa-count"></span></p>
     <div class="pane-tools">
       <input type="search" class="pane-filter" data-pane="qa" placeholder="検索 / Filter" style="display:none;">
-      <button class="undo-btn" title="元に戻す / Undo" disabled>↶</button>
       <button class="view-toggle" data-pane="qa">今日 / 全部</button>
     </div>
   </div>
@@ -79,7 +77,7 @@
     <p class="empty-msg" id="qa-empty" style="display:none;">- None -</p>
     <div class="loading-overlay" id="qa-loading"><span class="spinner"></span>Processing…</div>
   </div>
-  <p class="app-hint mobile-only">行を右にスワイプ: Sure（OK）／左にスワイプ: Show（答え）。ぶんしょうは右スワイプかチェックで完了</p>
+  <p class="app-hint mobile-only">⇄: ぶんしょう／もんだい切替　行を右にスワイプ: Sure（OK）／左にスワイプ: Show（答え）</p>
 
   <br>
   <hr>
@@ -160,10 +158,9 @@
 <div class="mobile-controls">
   <button id="m-up" aria-label="up">▲</button>
   <button id="m-down" aria-label="down">▼</button>
+  <button id="m-pane" aria-label="switch">⇄</button>
   <button id="m-show">Show</button>
   <button id="m-ok">Sure</button>
-  <button id="m-undo" aria-label="undo">↶</button>
-  <button id="m-more" aria-label="more">⋯</button>
 </div>
 
 </div>

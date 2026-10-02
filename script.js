@@ -77,13 +77,13 @@ function nextTurn(entity, settings){
 
 // ---- 画面の状態 ----
 // pane: "reading"（ぶんしょう） / "qa"（一問一答）
-// 選択（フォーカス）があるのは一問一答だけ。ぶんしょうは行ごとのチェックで完了にする。
+// j/k・c・Enter はフォーカス中の表に効く。Shift+J / Shift+K で表を切り替える。
 var panes = {
-  reading: { due:[], all:false, filter:"" },           // due: [{id, turn}] 本日分として固定されたリスト
+  reading: { due:[], all:false, filter:"", sel:null },  // due: [{id, turn}] 本日分として固定されたリスト
   qa:      { due:[], all:false, filter:"", sel:null }
 };
+var focusPane = "qa";
 var revealState = {};
-var undoStack = [];          // [{pane, before}] 直前の状態
 var editing = null;          // {pane, id, prevRegDate}
 
 function computeDueList(items, settings, today){
@@ -107,8 +107,10 @@ function refreshDueList(){
   panes.qa.due = computeDueList(loadItems(), settings, today);
   panes.reading.due = computeDueList(loadSentences(), settings, today);
   revealState = {};
-  var rows = paneRows("qa");
-  panes.qa.sel = rows.length ? rows[0].id : null;
+  ["reading", "qa"].forEach(function(p){
+    var rows = paneRows(p);
+    panes[p].sel = rows.length ? rows[0].id : null;
+  });
 }
 
 // After a save/sync: keep today's order, drop deleted, append newly due.
@@ -125,9 +127,9 @@ function reconcileDueLists(){
       if(t && !have[r.id]) due.push({id:r.id, turn:t});
     });
     panes[p].due = due;
+    var rows = paneRows(p);
+    if(!rows.some(function(r){ return r.id === panes[p].sel; })) panes[p].sel = rows.length ? rows[0].id : null;
   });
-  var rows = paneRows("qa");
-  if(!rows.some(function(r){ return r.id === panes.qa.sel; })) panes.qa.sel = rows.length ? rows[0].id : null;
 }
 
 function haystack(p, r){
@@ -191,7 +193,7 @@ function renderHead(p){
     if(all) cols.push(["actions", ""]);
   } else {
     cols = [["turn", "Turn"], ["sentence", "Sentences"]];
-    cols.push(all ? ["actions", ""] : ["done", "Done"]);
+    if(all) cols.push(["actions", ""]);
   }
   var table = document.getElementById(p + "-tbody").parentNode;
   table.classList.toggle("with-extra", cols.length > (p === "qa" ? 4 : 2));
@@ -231,6 +233,7 @@ function render(){
   renderReading();
   renderQa();
   ["reading", "qa"].forEach(function(p){
+    document.getElementById(p + "-head").classList.toggle("pane-focused", focusPane === p);
     var rows = paneRows(p);
     var done = rows.filter(function(r){ return r.done; }).length;
     document.getElementById(p + "-count").textContent = panes[p].all
@@ -241,12 +244,22 @@ function render(){
     f.style.display = panes[p].all ? "" : "none";
     if(f !== document.activeElement) f.value = panes[p].filter;
   });
-  document.querySelectorAll(".undo-btn").forEach(function(b){ b.disabled = !undoStack.length; });
 }
 // only after keyboard / button navigation, never on background re-renders
 function scrollToSelected(){
-  var sel = document.querySelector("#qa-tbody tr.selected");
+  var sel = document.querySelector("#" + focusPane + "-tbody tr.selected");
   if(sel && sel.scrollIntoView) sel.scrollIntoView({block:"nearest"});
+}
+
+function rowElement(p, row){
+  var tr = el("tr", "qa-row turn-color-" + (row.turn || "done") +
+    (row.done ? " qa-row-done" : "") +
+    (row.id === panes[p].sel ? " selected" + (focusPane === p ? "" : " selected-blur") : ""));
+  tr.dataset.id = row.id;
+  tr.dataset.pane = p;
+  tr.addEventListener("click", function(){ focusPane = p; panes[p].sel = row.id; render(); });
+  tr.appendChild(turnCell(row, panes[p].all));
+  return tr;
 }
 
 function renderQa(){
@@ -258,12 +271,7 @@ function renderQa(){
 
   rows.forEach(function(row){
     var it = row.rec;
-    var tr = el("tr", "qa-row turn-color-" + (row.turn || "done") +
-      (row.done ? " qa-row-done" : "") + (row.id === panes.qa.sel ? " selected" : ""));
-    tr.dataset.id = row.id;
-    tr.dataset.pane = "qa";
-    tr.addEventListener("click", function(){ panes.qa.sel = row.id; render(); });
-    tr.appendChild(turnCell(row, all));
+    var tr = rowElement("qa", row);
 
     var tdQ = document.createElement("td");
     tdQ.className = "qa-cell qa-cell-question";
@@ -276,7 +284,7 @@ function renderQa(){
     var ansSpan = document.createElement("span");
     ansSpan.className = revealed ? "answer-visible" : "answer-hidden";
     ansSpan.textContent = revealed ? it.answer : it.answer.replace(/./gs, "＝");
-    ansSpan.addEventListener("click", function(e){ e.stopPropagation(); panes.qa.sel = row.id; toggleReveal(row.id); });
+    ansSpan.addEventListener("click", function(e){ e.stopPropagation(); focusPane = "qa"; panes.qa.sel = row.id; toggleReveal(row.id); });
     tdA.appendChild(ansSpan);
     tr.appendChild(tdA);
 
@@ -298,27 +306,12 @@ function renderReading(){
   document.getElementById("reading-empty").style.display = rows.length ? "none" : "block";
 
   rows.forEach(function(row){
-    var tr = el("tr", "qa-row reading-row turn-color-" + (row.turn || "done") + (row.done ? " qa-row-done" : ""));
-    tr.dataset.id = row.id;
-    tr.dataset.pane = "reading";
-    tr.appendChild(turnCell(row, all));
+    var tr = rowElement("reading", row);
     var tdText = document.createElement("td");
     tdText.className = "qa-cell qa-cell-sentence";
     tdText.textContent = row.rec.text;
     tr.appendChild(tdText);
-    if(all){
-      tr.appendChild(actionsCell("reading", row));
-    } else {
-      // 読んだらチェック → このターンを完了（もう一度で取消）
-      var td = el("td", "qa-cell qa-cell-done");
-      var box = el("input", "done-check");
-      box.type = "checkbox";
-      box.checked = row.done;
-      box.title = "読んだ / Done";
-      box.addEventListener("change", function(){ markOk(row.id, "reading"); });
-      td.appendChild(box);
-      tr.appendChild(td);
-    }
+    if(all) tr.appendChild(actionsCell("reading", row));
     tbody.appendChild(tr);
   });
 }
@@ -333,7 +326,7 @@ function message(text, isError){
   clearTimeout(msgTimer);
   if(text) msgTimer = setTimeout(function(){ message(""); }, isError ? 6000 : 3500);
 }
-// 文字入力中か（チェックボックスやボタンは含めない: j/k/c を奪わないため）
+// 文字入力中か（ボタン等は含めない: j/k/c を奪わないため）
 function isInputFocused(){
   var a = document.activeElement;
   if(!a) return false;
@@ -347,17 +340,14 @@ function toggleReveal(id){
   render();
 }
 
-function clone(o){ return JSON.parse(JSON.stringify(o)); }
 // strictly newer than prev: a same-millisecond tie would merge instead of win
 function nextStamp(prev){ return Math.max(Date.now(), (+prev || 0) + 1); }
 
-// Apply fn to the stored record, remember the old one for undo, save.
+// Apply fn to the stored record and save.
 function updateRecord(p, id, fn){
   var list = loadRecords(p);
   var rec = list.find(function(x){ return x.id === id; });
   if(!rec) return null;
-  undoStack.push({pane:p, before:clone(rec)});
-  if(undoStack.length > 100) undoStack.shift();
   fn(rec);
   rec.updatedAt = nextStamp(rec.updatedAt);
   saveRecords(p, list);
@@ -365,7 +355,7 @@ function updateRecord(p, id, fn){
 }
 
 function markOk(id, p){
-  p = p || "qa";
+  p = p || focusPane;
   if(panes[p].all){ message("OK は「今日」の表示で使えます", true); return; }
   var entry = panes[p].due.find(function(x){ return x.id === id; });
   if(!entry) return;
@@ -378,42 +368,27 @@ function markOk(id, p){
   });
   message(nowDone ? "OK — turn " + entry.turn + " done" : "turn " + entry.turn + " を未完了に戻しました");
 
-  // autofocus（一問一答のみ）
-  if(nowDone && p === "qa"){
-    var rows = paneRows("qa");
+  // autofocus
+  if(nowDone){
+    var rows = paneRows(p);
     var curIdx = rows.findIndex(function(x){ return x.id === id; });
     if(curIdx !== -1){
       var n = rows.length;
       for(var d = 1; d < n; d++){
         var prevIdx = curIdx - d;
         if(prevIdx >= 0 && !rows[prevIdx].done){
-          panes.qa.sel = rows[prevIdx].id;
+          panes[p].sel = rows[prevIdx].id;
           break;
         }
         var nextIdx = curIdx + d;
         if(nextIdx < n && !rows[nextIdx].done){
-          panes.qa.sel = rows[nextIdx].id;
+          panes[p].sel = rows[nextIdx].id;
           break;
         }
       }
     }
   }
 
-  render();
-}
-
-function undo(){
-  var u = undoStack.pop();
-  if(!u){ message("元に戻せる操作はありません"); render(); return; }
-  var list = loadRecords(u.pane);
-  var before = u.before;
-  var i = list.findIndex(function(x){ return x.id === before.id; });
-  before.updatedAt = nextStamp(Math.max(+before.updatedAt || 0, i === -1 ? 0 : +list[i].updatedAt || 0));
-  if(i === -1) list.push(before); else list[i] = before;
-  saveRecords(u.pane, list);
-  reconcileDueLists();
-  if(u.pane === "qa" && paneRows("qa").some(function(r){ return r.id === before.id; })) panes.qa.sel = before.id;
-  message("元に戻しました");
   render();
 }
 
@@ -424,26 +399,30 @@ function deleteRecord(p, id){
   if(!confirm("削除しますか？ / Delete?\n\n" + label)) return;
   updateRecord(p, id, function(r){ r.deleted = true; });
   reconcileDueLists();
-  message("削除しました（↶ で元に戻せます）");
+  message("削除しました");
   render();
 }
 
 function moveSelection(delta){
-  var rows = paneRows("qa");
+  var p = focusPane, rows = paneRows(p);
   if(!rows.length) return;
-  var idx = rows.findIndex(function(d){ return d.id === panes.qa.sel; });
+  var idx = rows.findIndex(function(d){ return d.id === panes[p].sel; });
   if(idx === -1) idx = 0;
   idx = Math.max(0, Math.min(rows.length - 1, idx + delta));
-  panes.qa.sel = rows[idx].id;
+  panes[p].sel = rows[idx].id;
+  render();
+  scrollToSelected();
+}
+// ぶんしょう ⇄ もんだい（引数なしなら反対側へ）
+function switchPane(p){
+  focusPane = p || (focusPane === "qa" ? "reading" : "qa");
   render();
   scrollToSelected();
 }
 function toggleView(p){
   panes[p].all = !panes[p].all;
-  if(p === "qa"){
-    var rows = paneRows("qa");
-    panes.qa.sel = rows.length ? rows[0].id : null;
-  }
+  var rows = paneRows(p);
+  panes[p].sel = rows.length ? rows[0].id : null;
   render();
 }
 
@@ -780,41 +759,29 @@ document.getElementById("file-input").addEventListener("change", function(){
 // ---- モバイル操作ボタン ----
 document.getElementById("m-up").addEventListener("click", function(){ moveSelection(-1); });
 document.getElementById("m-down").addEventListener("click", function(){ moveSelection(1); });
-document.getElementById("m-show").addEventListener("click", function(){ if(panes.qa.sel) toggleReveal(panes.qa.sel); });
-document.getElementById("m-ok").addEventListener("click", function(){ if(panes.qa.sel) markOk(panes.qa.sel, "qa"); });
-document.getElementById("m-undo").addEventListener("click", undo);
-document.getElementById("m-more").addEventListener("click", function(){
-  var d = KWSync.dialog("Menu");
-  [
-    [panes.qa.all ? "もんだい: 今日の分を表示" : "もんだい: 全部を表示（編集・削除）", function(){ toggleView("qa"); }],
-    [panes.reading.all ? "ぶんしょう: 今日の分を表示" : "ぶんしょう: 全部を表示（編集・削除）", function(){ toggleView("reading"); }],
-    ["⟳ LAN同期 / Sync", function(){ syncNow(false); }],
-    ["▦ QRを表示 / Show QR", showSyncQr],
-    ["⌖ QRを読む / Scan QR", scanSyncQr]
-  ].forEach(function(a){
-    var b = el("button", "menu-item", a[0]);
-    b.addEventListener("click", function(){ KWSync.closeDialog(); a[1](); });
-    d.body.appendChild(b);
-  });
-});
-
-// ---- 見出しのボタン（元に戻す / 今日⇄全部 / 全部表示での絞り込み） ----
+document.getElementById("m-pane").addEventListener("click", function(){ switchPane(); });
+document.getElementById("m-show").addEventListener("click", showAnswer);
+document.getElementById("m-ok").addEventListener("click", function(){ if(panes[focusPane].sel) markOk(panes[focusPane].sel); });
+// ---- 見出し（クリックでその表にフォーカス）と、今日⇄全部 / 全部表示での絞り込み ----
 document.querySelectorAll(".view-toggle").forEach(function(b){
   b.addEventListener("click", function(){ toggleView(b.dataset.pane); });
 });
-document.querySelectorAll(".undo-btn").forEach(function(b){ b.addEventListener("click", undo); });
+document.querySelectorAll(".pane-head").forEach(function(h){
+  h.addEventListener("click", function(e){
+    if(e.target.tagName !== "BUTTON" && e.target.tagName !== "INPUT") switchPane(h.dataset.pane);
+  });
+});
 document.querySelectorAll(".pane-filter").forEach(function(f){
   f.addEventListener("input", function(){
-    panes[f.dataset.pane].filter = f.value;
-    if(f.dataset.pane === "qa"){
-      var rows = paneRows("qa");
-      if(!rows.some(function(r){ return r.id === panes.qa.sel; })) panes.qa.sel = rows.length ? rows[0].id : null;
-    }
+    var p = f.dataset.pane;
+    panes[p].filter = f.value;
+    var rows = paneRows(p);
+    if(!rows.some(function(r){ return r.id === panes[p].sel; })) panes[p].sel = rows.length ? rows[0].id : null;
     render();
   });
 });
 
-// ---- スワイプ（右: Sure / 左: Show。ぶんしょうは右で完了） ----
+// ---- スワイプ（右: Sure / 左: Show） ----
 ["reading-tbody", "qa-tbody"].forEach(function(id){
   var tbody = document.getElementById(id), sx = 0, sy = 0, tr = null;
   tbody.addEventListener("touchstart", function(e){
@@ -834,14 +801,20 @@ document.querySelectorAll(".pane-filter").forEach(function(f){
     var t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
     if(Math.abs(dx) < 70 || Math.abs(dy) > 45) return;
     var p = row.dataset.pane, rid = row.dataset.id;
-    if(p === "qa") panes.qa.sel = rid;
+    focusPane = p; panes[p].sel = rid;
     if(dx > 0) markOk(rid, p);
-    else if(p === "qa") toggleReveal(rid);
+    else showAnswer();
   });
 });
 
+// Enter / Show: 答えの表示（ぶんしょうには隠れた答えがない）
+function showAnswer(){
+  if(focusPane !== "qa"){ message("ぶんしょうには隠れた答えがありません — 読んだら OK（c / Sure）"); render(); return; }
+  if(panes.qa.sel) toggleReveal(panes.qa.sel);
+}
+
 // ---- キーボード操作 ----
-// オリジナルと同じ j / k / Enter / c だけ（Vimium と競合しないよう、ほかの一文字キーは使わない）。
+// オリジナルの j / k / Enter / c に、表の切り替え Shift+J（もんだいへ）/ Shift+K（ぶんしょうへ）だけを足す。
 document.addEventListener("keydown", function(e){
   if(e.isComposing || e.keyCode === 229) return;
   if(KWSync.isDialogOpen()){ KWSync.dialogKey(e); return; }
@@ -854,12 +827,17 @@ document.addEventListener("keydown", function(e){
 
   if(isInputFocused()) return;
   if(e.ctrlKey || e.metaKey || e.altKey) return;
-  if(!paneRows("qa").length) return;
 
-  if(e.key === "j"){ e.preventDefault(); moveSelection(1); }
-  else if(e.key === "k"){ e.preventDefault(); moveSelection(-1); }
-  else if(e.key === "Enter"){ e.preventDefault(); if(panes.qa.sel) toggleReveal(panes.qa.sel); }
-  else if(e.key === "c" || e.key === "C"){ e.preventDefault(); if(panes.qa.sel) markOk(panes.qa.sel, "qa"); }
+  var key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  // Shift が押されていれば表の切り替え（Caps Lock だけなら普通の j/k として扱う）
+  if(e.shiftKey && key === "j"){ e.preventDefault(); switchPane("qa"); return; }
+  if(e.shiftKey && key === "k"){ e.preventDefault(); switchPane("reading"); return; }
+  if(!paneRows(focusPane).length) return;
+
+  if(key === "j"){ e.preventDefault(); moveSelection(1); }
+  else if(key === "k"){ e.preventDefault(); moveSelection(-1); }
+  else if(e.key === "Enter"){ e.preventDefault(); showAnswer(); }
+  else if(key === "c"){ e.preventDefault(); if(panes[focusPane].sel) markOk(panes[focusPane].sel); }
 });
 
 // ---- 起動 ----
