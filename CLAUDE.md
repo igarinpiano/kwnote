@@ -80,6 +80,7 @@ cd cli && cargo clippy && cargo fmt
 cd cli && cargo run -q --example qr_fixtures > /tmp/qr.json && node ../tests/qr_crosscheck.mjs /tmp/qr.json
 node tests/sync_interop.mjs      # 要 target/debug/kwnote（ルートで cargo build）。JS⇔Rust の同期コード往復とマージ一致（乱数200件）
 for f in script.js sync.js qr.js sw.js; do node --check $f; done
+node tests/web_version.mjs --fix # Web ファイル（style.css/qr.js/sync.js/script.js）を変えたら必ず実行
 ```
 
 ## CI・リリース
@@ -95,6 +96,7 @@ for f in script.js sync.js qr.js sw.js; do node --check $f; done
 
 ## 開発上の注意
 
+- **キャッシュ対策**: GitHub Pages は全ファイルを 10 分キャッシュするため、`index.htm` だけ新しく JS が古い、という混在が起きる（実際に「スマホで古い Done 列が出る・⇄ が効かない」として起きた）。対策は 3 つ: (1) `index.htm` は `style.css?v=<ハッシュ>` のように読み込み、ハッシュは `tests/web_version.mjs --fix` が中身から計算する（CI が古いと失敗させる）、(2) `sw.js` はネットワーク優先かつ毎回再検証（`cache: "no-cache"`）、(3) 新しい Service Worker に切り替わったらページを 1 回だけ自動リロード。`sw.js` の中身を変えたら `CACHE` 名も上げる。
 - `qr.js` を触ったら `qr_crosscheck.mjs`（Rust `qrcode` crate と行列が完全一致するか、8 マスク総当たり）を必ず通す。
 - マージ・フォーマットを触ったら `sync_interop.mjs` を通す。
 - macOS: ビルド済みバイナリを `cp` で上書きすると署名キャッシュで SIGKILL されることがある（`rm` してからコピー）。

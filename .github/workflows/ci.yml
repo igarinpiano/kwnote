@@ -53,6 +53,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: JavaScript syntax
         run: for f in script.js sync.js qr.js sw.js; do node --check "$f"; done
+      - name: index.htm asset versions match the files (cache busting)
+        run: node tests/web_version.mjs
       - name: Manifest is valid JSON
         run: node -e 'JSON.parse(require("fs").readFileSync("manifest.webmanifest", "utf8"))'
       - name: Build CLI

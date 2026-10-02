@@ -864,5 +864,11 @@ window.addEventListener("storage", function(e){
   if(e.key === K_ITEMS || e.key === K_SENTENCES || e.key === K_SETTINGS){ loadSettingsToForm(); reconcileDueLists(); render(); }
 });
 if("serviceWorker" in navigator && window.isSecureContext && location.protocol !== "file:"){
-  navigator.serviceWorker.register("sw.js").catch(function(){});
+  // a new version took over (after a deploy): reload once so the page and
+  // its scripts all come from the new version
+  var hadController = !!navigator.serviceWorker.controller, reloading = false;
+  navigator.serviceWorker.addEventListener("controllerchange", function(){
+    if(hadController && !reloading){ reloading = true; location.reload(); }
+  });
+  navigator.serviceWorker.register("sw.js").then(function(reg){ reg.update(); }).catch(function(){});
 }
