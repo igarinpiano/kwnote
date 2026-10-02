@@ -2,6 +2,7 @@
   --bg:#ffffff; --fg:#000000; --border:#000000; --accent:#3a5a8c;
   --hidden-bg:#2b2b2b; --hidden-fg:#2b2b2b;
   --turn1-bg:#e7effa; --turn2-bg:#e8f5ea; --turn3-bg:#fbf3d6; --turn4-bg:#fbe6da;
+  --turn5-bg:#efe7fa; --turn6-bg:#fae6f1; --turn7-bg:#e1f4f4; --turn8-bg:#f0f1e0;
   --done-bg:#dcdcdc; --done-fg:#6b6b6b;
   box-sizing:border-box;
   padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
@@ -74,6 +75,10 @@ th {
 .qa-row.turn-color-2{background:var(--turn2-bg);}
 .qa-row.turn-color-3{background:var(--turn3-bg);}
 .qa-row.turn-color-4{background:var(--turn4-bg);}
+.qa-row.turn-color-5{background:var(--turn5-bg);}
+.qa-row.turn-color-6{background:var(--turn6-bg);}
+.qa-row.turn-color-7{background:var(--turn7-bg);}
+.qa-row.turn-color-8{background:var(--turn8-bg);}
 .qa-row.selected .qa-cell{
     /*
     border-top:3px solid var(--accent); border-bottom:3px solid var(--accent);
@@ -159,7 +164,10 @@ input[type=text], input[type=date], textarea, input[type=number]{
 }
 .code-area{width:min(80vw, 480px); height:160px; font-family:monospace; font-size:0.75rem;}
 .settings-row label{font-size:0.8rem;}
-.settings-row input[type=number]{width:50px;}
+.settings-row input[type=number]{width:62px;}
+.settings-row + .settings-row{margin-top:6px;}
+.settings-row select{font-size:0.8rem;}
+.settings-note{font-size:0.75rem; color:#555; margin:4px 0 0;}
 .mobile-controls{display:none;}
 
 .turn-due{font-weight:bold;}

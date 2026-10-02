@@ -1,4 +1,21 @@
 var K_ITEMS="srs_items", K_SETTINGS="srs_settings", K_SENTENCES="srs_sentences";
+var K_TODAY="kw_today";   // 今日のリスト（この端末だけ。並び順と上限を 1 日保つ）
+
+// 設定: { n:[turn ごとの日数…（個数 = 表示回数）], order, limit, updatedAt }
+// 値と意味は cli/src/model.rs（Settings / PRESETS / Order）と揃える。
+var DEFAULT_N = [1,3,7,14], MAX_TURNS = 20;
+var PRESETS = [
+  ["standard", "標準",  [1,3,7,14]],
+  ["dense",    "こまめ", [1,2,3,5,7,10,14]],
+  ["long",     "長期",  [1,3,7,14,30,60,120]],
+  ["daily",    "毎日",  [1,2,3,4,5,6,7]]
+];
+var ORDERS = [
+  ["random", "ランダム / Random"],
+  ["due",    "遅れている順 / Most overdue"],
+  ["oldest", "登録が古い順 / Oldest"],
+  ["newest", "登録が新しい順 / Newest"]
+];
 
 function safeGet(key, fallback){
   try{ var v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
@@ -12,7 +29,18 @@ function safeSet(key, val){
 // that it can propagate through sync. Every change stamps updatedAt.
 function loadItems(){ return safeGet(K_ITEMS, []); }
 function saveItems(v){ safeSet(K_ITEMS, v); scheduleAutoSync(); }
-function loadSettings(){ return safeGet(K_SETTINGS, {n:[1,3,7,14]}); }
+// 保存されている値は変えずに、使うときだけ整える（壊れた値・空の n は既定値）
+function normSettings(s){
+  var out = {}, k;
+  s = s && typeof s === "object" ? s : {};
+  for(k in s) if(s.hasOwnProperty(k)) out[k] = s[k];
+  var n = Array.isArray(s.n) ? s.n.map(function(x){ x = parseInt(x, 10); return x > 0 ? x : 0; }) : [];
+  out.n = n.length ? n : DEFAULT_N.slice();
+  return out;
+}
+function settingOrder(s){ return ORDERS.some(function(o){ return o[0] === s.order; }) ? s.order : "random"; }
+function settingLimit(s){ var l = parseInt(s.limit, 10); return l > 0 ? l : 0; }
+function loadSettings(){ return normSettings(safeGet(K_SETTINGS, null)); }
 function saveSettings(v){ safeSet(K_SETTINGS, v); scheduleAutoSync(); }
 function loadSentences(){
   var list = safeGet(K_SENTENCES, []);
@@ -31,7 +59,7 @@ function loadRecords(pane){ return pane === "qa" ? loadItems() : loadSentences()
 function saveRecords(pane, v){ if(pane === "qa") saveItems(v); else saveSentences(v); }
 
 function getDoc(){
-  return { version:2, items: loadItems(), settings: loadSettings(), sentences: loadSentences() };
+  return { version:2, items: loadItems(), settings: safeGet(K_SETTINGS, {n:DEFAULT_N.slice()}), sentences: loadSentences() };
 }
 function setDoc(doc){
   safeSet(K_ITEMS, doc.items || []);
@@ -58,7 +86,7 @@ function getRegDate(){
 }
 function dueTurn(entity, settings, today){
   var n = settings.n;
-  for(var t=1; t<=4; t++){
+  for(var t=1; t<=n.length; t++){
     if(entity.completedTurns && entity.completedTurns.indexOf(t) !== -1) continue;
     var sched = addDays(entity.registeredDate, n[t-1] || 0);
     if(sched <= today) return t;
@@ -66,9 +94,9 @@ function dueTurn(entity, settings, today){
   }
   return null;
 }
-// first unfinished turn and its date, or null when all four are done
+// first unfinished turn and its date, or null when all turns are done
 function nextTurn(entity, settings){
-  for(var t=1; t<=4; t++){
+  for(var t=1; t<=settings.n.length; t++){
     if(entity.completedTurns && entity.completedTurns.indexOf(t) !== -1) continue;
     return {turn:t, date:addDays(entity.registeredDate, settings.n[t-1] || 0)};
   }
@@ -86,50 +114,90 @@ var focusPane = "qa";
 var revealState = {};
 var editing = null;          // {pane, id, prevRegDate}
 
-function computeDueList(items, settings, today){
-  var list = [];
-  items.forEach(function(it){
-    if(!alive(it)) return;
-    var t = dueTurn(it, settings, today);
-    if(t){ list.push({id:it.id, turn:t}); }
-  });
-  // Fisher-Yates shuffle
+function shuffle(list){
   for(var i = list.length - 1; i > 0; i--){
     var j = Math.floor(Math.random() * (i + 1));
     var tmp = list[i]; list[i] = list[j]; list[j] = tmp;
   }
   return list;
 }
+function cmp(a, b){ return a < b ? -1 : a > b ? 1 : 0; }
 
-function refreshDueList(){
-  var settings = loadSettings();
-  var today = getToday();
-  panes.qa.due = computeDueList(loadItems(), settings, today);
-  panes.reading.due = computeDueList(loadSentences(), settings, today);
-  revealState = {};
-  ["reading", "qa"].forEach(function(p){
-    var rows = paneRows(p);
-    panes[p].sel = rows.length ? rows[0].id : null;
+// 今日のリスト（cli/src/model.rs build_today と同じ考え方）:
+// carry（引き継ぐ行）をそのままの順で先頭に置き、残りの「今日の分」を
+// 設定の並び順で後ろに足す。上限（limit）があればそこまで。
+// 終わった行も今日のうちはリストに残るので、上限に数えられる。
+function buildToday(recs, settings, today, carry){
+  var byId = {}, have = {}, out = [], cand = [];
+  recs.forEach(function(r){ if(alive(r)) byId[r.id] = r; });
+  (carry || []).forEach(function(e){
+    if(byId[e.id] && !have[e.id]){ have[e.id] = true; out.push({id:e.id, turn:e.turn}); }
+  });
+  recs.forEach(function(r){
+    if(!alive(r) || have[r.id]) return;
+    var t = dueTurn(r, settings, today);
+    if(t) cand.push({id:r.id, turn:t, sched:addDays(r.registeredDate, settings.n[t-1] || 0), reg:r.registeredDate || ""});
+  });
+  var order = settingOrder(settings);
+  if(order === "random") shuffle(cand);
+  else cand.sort(function(a, b){
+    if(order === "due") return cmp(a.sched, b.sched) || cmp(a.reg, b.reg);
+    if(order === "oldest") return cmp(a.reg, b.reg);
+    return cmp(b.reg, a.reg);
+  });
+  var limit = settingLimit(settings);
+  if(limit) cand = cand.slice(0, Math.max(0, limit - out.length));
+  return out.concat(cand.map(function(c){ return {id:c.id, turn:c.turn}; }));
+}
+
+// list の中で、その turn をもう終えている行だけ
+function doneEntries(recs, list){
+  var byId = {};
+  recs.forEach(function(r){ byId[r.id] = r; });
+  return (list || []).filter(function(e){
+    var r = byId[e.id];
+    return r && (r.completedTurns || []).indexOf(e.turn) !== -1;
   });
 }
 
-// After a save/sync: keep today's order, drop deleted, append newly due.
+function todaySig(s){ return JSON.stringify([s.n, settingOrder(s), settingLimit(s)]); }
+function saveToday(){
+  safeSet(K_TODAY, {date:listDate, sig:todaySig(loadSettings()), reading:panes.reading.due, qa:panes.qa.due});
+}
+
+// 今日のリストを作り直す（日付・設定の変更時）。同じ日のうちは終えた行を残す。
+// restore=true（起動時）: 同じ日・同じ設定で前回作ったリストがあればそれを使う。
+var listDate = null;
+function refreshDueList(restore){
+  var settings = loadSettings(), today = getToday();
+  var saved = restore ? safeGet(K_TODAY, null) : null;
+  if(saved && saved.date !== today) saved = null;
+  ["reading", "qa"].forEach(function(p){
+    var recs = loadRecords(p), carry;
+    if(saved && saved.sig === todaySig(settings)) carry = saved[p] || [];
+    else if(saved) carry = doneEntries(recs, saved[p]);
+    else carry = listDate === today ? doneEntries(recs, panes[p].due) : [];
+    panes[p].due = buildToday(recs, settings, today, carry);
+  });
+  listDate = today;
+  saveToday();
+  revealState = {};
+  ["reading", "qa"].forEach(function(p){
+    var rows = paneRows(p), first = rows.find(function(r){ return !r.done; }) || rows[0];
+    panes[p].sel = first ? first.id : null;
+  });
+}
+
+// After a save/sync: keep today's order, drop deleted, append newly due (within the limit).
 function reconcileDueLists(){
   var settings = loadSettings(), today = getToday();
   ["reading", "qa"].forEach(function(p){
-    var recs = loadRecords(p).filter(alive), byId = {};
-    recs.forEach(function(r){ byId[r.id] = r; });
-    var due = panes[p].due.filter(function(e){ return byId[e.id]; });
-    var have = {};
-    due.forEach(function(e){ have[e.id] = true; });
-    recs.forEach(function(r){
-      var t = dueTurn(r, settings, today);
-      if(t && !have[r.id]) due.push({id:r.id, turn:t});
-    });
-    panes[p].due = due;
+    panes[p].due = buildToday(loadRecords(p), settings, today, panes[p].due);
     var rows = paneRows(p);
     if(!rows.some(function(r){ return r.id === panes[p].sel; })) panes[p].sel = rows.length ? rows[0].id : null;
   });
+  listDate = today;
+  saveToday();
 }
 
 function haystack(p, r){
@@ -252,7 +320,7 @@ function scrollToSelected(){
 }
 
 function rowElement(p, row){
-  var tr = el("tr", "qa-row turn-color-" + (row.turn || "done") +
+  var tr = el("tr", "qa-row turn-color-" + (row.turn ? Math.min(row.turn, 8) : "done") +
     (row.done ? " qa-row-done" : "") +
     (row.id === panes[p].sel ? " selected" + (focusPane === p ? "" : " selected-blur") : ""));
   tr.dataset.id = row.id;
@@ -554,25 +622,81 @@ document.getElementById("cancel-sentence-btn").addEventListener("click", cancelE
 });
 
 // ---- 設定 ----
+// フォームは SAVE するまで保存しない（＋1回・－1回・プリセットはフォームだけ変える）
+function turnInputs(){ return [].slice.call(document.querySelectorAll("#turn-inputs input")); }
+function formIntervals(){ return turnInputs().map(function(i){ var v = parseInt(i.value, 10); return v > 0 ? v : 0; }); }
+function renderTurnInputs(n){
+  var box = document.getElementById("turn-inputs");
+  box.innerHTML = "";
+  n.forEach(function(d, i){
+    var label = el("label", "", "turn " + (i + 1) + ": ");
+    var input = el("input");
+    input.type = "number"; input.min = "0"; input.id = "n" + (i + 1); input.value = d;
+    input.addEventListener("input", updateSettingsNote);
+    label.appendChild(input);
+    box.appendChild(label);
+  });
+  document.getElementById("turn-add-btn").disabled = n.length >= MAX_TURNS;
+  document.getElementById("turn-del-btn").disabled = n.length <= 1;
+  updateSettingsNote();
+}
+function updateSettingsNote(){
+  var n = formIntervals();
+  var limit = parseInt(document.getElementById("limit-input").value, 10) || 0;
+  document.getElementById("settings-note").textContent =
+    "表示 " + n.length + " 回：登録の " + n.join("・") + " 日後" +
+    (limit > 0 ? "　/　今日のリストは各 " + limit + " 件まで" : "");
+}
 function loadSettingsToForm(){
   var s = loadSettings();
-  document.getElementById("n1").value = s.n[0];
-  document.getElementById("n2").value = s.n[1];
-  document.getElementById("n3").value = s.n[2];
-  document.getElementById("n4").value = s.n[3];
+  renderTurnInputs(s.n);
+  document.getElementById("order-select").value = settingOrder(s);
+  document.getElementById("limit-input").value = settingLimit(s);
+  updateSettingsNote();
 }
 function applySettings(n){
-  saveSettings({n:n, updatedAt:Date.now()});
+  var s = normSettings(safeGet(K_SETTINGS, null));   // 知らない項目も残す
+  s.n = n;
+  s.order = document.getElementById("order-select").value;
+  s.limit = Math.max(0, parseInt(document.getElementById("limit-input").value, 10) || 0);
+  s.updatedAt = nextStamp(s.updatedAt);
+  saveSettings(s);
   loadSettingsToForm();
   doRefresh();
 }
+(function(){
+  var preset = document.getElementById("preset-select");
+  PRESETS.forEach(function(p){
+    var o = el("option", "", p[1] + "（" + p[2].join("・") + "）");
+    o.value = p[0];
+    preset.appendChild(o);
+  });
+  preset.addEventListener("change", function(){
+    var p = PRESETS.find(function(x){ return x[0] === preset.value; });
+    preset.value = "";
+    if(!p) return;
+    renderTurnInputs(p[2].slice());
+    message("「" + p[1] + "」を入れました — SAVE で保存");
+  });
+  var order = document.getElementById("order-select");
+  ORDERS.forEach(function(x){ var o = el("option", "", x[1]); o.value = x[0]; order.appendChild(o); });
+  document.getElementById("limit-input").addEventListener("input", updateSettingsNote);
+})();
+document.getElementById("turn-add-btn").addEventListener("click", function(){
+  var n = formIntervals(), last = n.length ? n[n.length - 1] : 1;
+  if(n.length >= MAX_TURNS) return;
+  n.push(Math.max(last * 2, last + 1));   // 新しい回は前の回の 2 倍の日数から
+  renderTurnInputs(n);
+  var inputs = turnInputs();
+  inputs[inputs.length - 1].focus();
+});
+document.getElementById("turn-del-btn").addEventListener("click", function(){
+  var n = formIntervals();
+  if(n.length > 1){ n.pop(); renderTurnInputs(n); }
+});
 document.getElementById("save-settings-btn").addEventListener("click", function(){
-  applySettings([
-    parseInt(document.getElementById("n1").value,10) || 0,
-    parseInt(document.getElementById("n2").value,10) || 0,
-    parseInt(document.getElementById("n3").value,10) || 0,
-    parseInt(document.getElementById("n4").value,10) || 0
-  ]);
+  applySettings(formIntervals());
+  message("設定を保存しました / Saved");
 });
 loadSettingsToForm();
 
@@ -841,7 +965,7 @@ document.addEventListener("keydown", function(e){
 });
 
 // ---- 起動 ----
-refreshDueList();
+refreshDueList(true);
 render();
 describeServer();
 function pairWithServer(){

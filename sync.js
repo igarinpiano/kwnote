@@ -18,7 +18,7 @@
     if(lu > ou) return local;
     var turns = (local.completedTurns || []).concat(other.completedTurns || []);
     var r = JSON.parse(JSON.stringify(local));
-    r.completedTurns = turns.filter(function(t, i){ return turns.indexOf(t) === i; }).sort();
+    r.completedTurns = turns.filter(function(t, i){ return turns.indexOf(t) === i; }).sort(function(a, b){ return a - b; });
     if(local.deleted || other.deleted) r.deleted = true;
     return r;
   }

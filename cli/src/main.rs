@@ -53,10 +53,23 @@ enum Cmd {
     },
     /// Show counts: due today, due tomorrow, finished
     Stats,
-    /// Show or set the four review intervals in days
+    /// Show or change the settings: intervals (one per turn), order, daily cap
     Settings {
-        #[arg(num_args = 4, value_names = ["N1", "N2", "N3", "N4"])]
+        /// Days after registering for each turn, 1 to 20 values (e.g. 1 3 7 14 30)
+        #[arg(value_name = "DAYS", num_args = 1..=model::MAX_TURNS)]
         n: Option<Vec<i64>>,
+        /// Use preset intervals: standard, dense, long, daily
+        #[arg(short, long, value_name = "NAME", conflicts_with = "n")]
+        preset: Option<String>,
+        /// Number of turns: cuts the list, or extends it by doubling the last interval
+        #[arg(short, long, value_name = "N", conflicts_with_all = ["n", "preset"])]
+        turns: Option<usize>,
+        /// Order of today's list: random, due, oldest, newest
+        #[arg(short, long, value_name = "ORDER")]
+        order: Option<String>,
+        /// Daily cap of today's list per pane (0 = none)
+        #[arg(short, long, value_name = "N")]
+        limit: Option<usize>,
     },
     /// Write the data as JSON (same format as the web app's SAVE FILE)
     Export {
@@ -199,22 +212,59 @@ fn run() -> Result<()> {
             println!("sentences      : {} (due {})", s.sentences, s.due_sentences);
             println!("due tomorrow   : {}", s.due_tomorrow);
             println!("all turns done : {}", s.finished);
-            println!("intervals      : {:?}", doc.settings.n);
+            println!("settings       : {}", doc.settings.describe());
             Ok(())
         }
-        Cmd::Settings { n } => {
+        Cmd::Settings {
+            n,
+            preset,
+            turns,
+            order,
+            limit,
+        } => {
             let mut doc = store::load()?;
+            let mut s = doc.settings.clone();
             if let Some(n) = n {
-                if n.iter().any(|x| *x < 0) {
-                    bail!("intervals must be >= 0");
+                s.n = n;
+            }
+            if let Some(p) = preset {
+                let names: Vec<&str> = model::PRESETS.iter().map(|p| p.0).collect();
+                s.n = model::preset(&p)
+                    .with_context(|| format!("unknown preset {p:?} (use {})", names.join(", ")))?
+                    .to_vec();
+            }
+            if let Some(t) = turns {
+                if !(1..=model::MAX_TURNS).contains(&t) {
+                    bail!("--turns must be 1 to {}", model::MAX_TURNS);
                 }
-                doc.settings.n = n;
-                doc.settings.updated_at = now_ms();
+                while s.n.len() < t {
+                    let last = s.n.last().copied().unwrap_or(1);
+                    s.n.push((last * 2).max(last + 1));
+                }
+                s.n.truncate(t);
+            }
+            if let Some(o) = order {
+                s.set_order(model::Order::parse(&o).with_context(|| {
+                    format!("unknown order {o:?} (random, due, oldest, newest)")
+                })?);
+            }
+            if let Some(l) = limit {
+                s.set_limit(l);
+            }
+            if s != doc.settings {
+                model::check_intervals(&s.n).map_err(anyhow::Error::msg)?;
+                s.updated_at = model::next_stamp(doc.settings.updated_at);
+                doc.settings = s;
                 doc = store::commit(&doc)?;
             }
-            let n = &doc.settings.n;
-            for (i, d) in n.iter().enumerate() {
-                println!("turn {}: {d} day(s) after registering", i + 1);
+            let s = &doc.settings;
+            for (i, d) in s.n.iter().enumerate() {
+                println!("turn {:>2}: {d} day(s) after registering", i + 1);
+            }
+            println!("order  : {}", s.order().as_str());
+            match s.limit() {
+                0 => println!("limit  : none"),
+                l => println!("limit  : {l} per day (each of Sentences / Q&A)"),
             }
             Ok(())
         }

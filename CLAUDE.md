@@ -24,13 +24,18 @@ Web 側は**ビルド工程なし・クラシック `<script>`**（ES modules �
 
 ## データモデル（Web と CLI で共通・最重要）
 
-`{ version: 2, items: [...], sentences: [...], settings: { n: [1,3,7,14], updatedAt } }`
+`{ version: 2, items: [...], sentences: [...], settings: { n: [1,3,7,14], order?, limit?, updatedAt } }`
 
 - Web の保存先は localStorage の `srs_items` / `srs_sentences` / `srs_settings`（既存ユーザーのデータがあるのでキー名を変えない）。同期サーバー設定は `kw_sync`。
 - CLI の保存先は `--data` → `$KWNOTE_DATA` → `<data dir>/kwnote/data.json`（macOS: `~/Library/Application Support/kwnote/`）。設定（remote・サーバーキー）は `--data` に関係なく `<data dir>/kwnote/config.json`。`KWNOTE_HOME` でディレクトリごと差し替え可（テストで使う）。
 - item: `id, question, answer, note, registeredDate(YYYY-MM-DD), completedTurns[1..4], updatedAt(ms), deleted?`
   sentence: `id, text, registeredDate, completedTurns, updatedAt, deleted?`
 - **スケジュール**: turn t の予定日 = `registeredDate + n[t-1]` 日（累積ではない）。最初の未完了 turn の予定日 ≤ 基準日なら「今日の分」。`dueTurn`(script.js) と `due_turn`(model.rs) は同じ意味を保つ。
+- **settings**（`normSettings`/`PRESETS`/`ORDERS`(script.js) ⇔ `Settings`/`PRESETS`/`Order`(model.rs)）:
+  - `n` の**個数 = 表示回数（turn 数）**。入力 UI は 1〜20（`MAX_TURNS`）。読み込みは何個でも可、空や壊れた値は既定 `[1,3,7,14]`、負数・数字以外は 0。`completedTurns` は 1〜255 を保持する（v1.0.2 までの CLI は 1〜4 以外を捨てるが、同値タイの和集合で戻る）。
+  - `order`: `random`（既定）/`due`（予定日が古い順）/`oldest`/`newest`（登録日順）。`limit`: 今日のリストの各表の上限（0/なし = 無制限）。Rust では `extra` に入れたまま扱う（無いものを書き足さない＝JSON がそのまま往復する）。
+  - 設定 UI はほかの項目を消さない（Web の `applySettings` は既存の settings に上書き）。
+- **今日のリスト**（`buildToday`(script.js) ⇔ `build_today`(model.rs)）: 引き継ぐ行（carry）を先頭に、残りの今日の分を `order` で並べて `limit` まで足す。終えた行もその日のうちはリストに残り上限に数える。端末ごとに保存（Web: localStorage `kw_today`、TUI: `<home>/today.json`）し、同じ日・同じ設定なら起動時にそのまま復元、設定が変わったら「終えた行」だけ残して作り直す。同期では共有しない。
 - **削除はトゥームストーン**（`deleted: true`）。レコードを配列から消すと同期で復活するので消さない。
 - **変更時は必ず `updatedAt` を更新し、しかも直前の値より厳密に大きくする**（JS `nextStamp` / Rust `next_stamp`・`Record::touch`）。同一ミリ秒で同値になると下のタイ規則で `deleted` が OR され、「削除→元に戻す」が失われる（実際に起きたバグ）。
 - 未知フィールドは保持する（Rust は `#[serde(flatten)] extra`）。旧データ（`updatedAt` なし・`note: null` 等）も読めること。
@@ -69,13 +74,13 @@ Web 側は**ビルド工程なし・クラシック `<script>`**（ES modules �
 - 選択（フォーカス）は両方の表にあり、`focusPane` 側に j/k/c/Enter が効く（見出しに ▶）。ぶんしょうの完了は `c`（スマホは Sure / 右スワイプ）。Shift 判定は `e.shiftKey` で行う（Caps Lock だけなら通常の j/k）。
 - スマホの下部ボタンは ▲ ▼ ⇄ Show Sure の 5 つだけにする。
 - 入力欄フォーカス中（チェックボックス等は除く）・IME 変換中（`isComposing`/keyCode 229）はキーを奪わない。フォームの Enter は「次の欄 / 最後の欄で登録」。
-- **TUI（`cli/src/tui.rs`）は vim 風のまま**（端末なので Vimium と無関係）: `j/k`・回数・`gg/G`・`h/l` でペイン切替・`c`・`u`・`o`・`e`・`dd`・`/`・`t`・`:` コマンド・`?`。キー一覧は `HELP` 定数と README の「TUI のキー操作」を揃える。
+- **TUI（`cli/src/tui.rs`）は vim 風のまま**（端末なので Vimium と無関係）: `j/k`・回数・`gg/G`・`h/l` でペイン切替・`c`・`u`・`o`・`e`・`dd`・`/`・`t`・`:` コマンド・`?`。キー一覧は `HELP` 定数と README の「TUI のキー操作」を揃える。設定は `:set`（`n=` `nN=` `turns=` `preset=` `order=` `limit=`）。設定の項目を増やすときは Web の設定欄・`kwnote settings`・`:set`・README を揃える。
 
 ## 開発コマンド
 
 ```bash
 cd cli && cargo build            # Web ファイルを埋め込むので、Web を変えたら serve 用に再ビルド
-cd cli && cargo test             # model/codec/TUI（TestBackend で実キー操作→描画を検証）
+cd cli && cargo test             # model/codec/TUI（TestBackend で実キー操作→描画を検証。保存するテストは temp_data() で直列化）
 cd cli && cargo clippy && cargo fmt
 cd cli && cargo run -q --example qr_fixtures > /tmp/qr.json && node ../tests/qr_crosscheck.mjs /tmp/qr.json
 node tests/sync_interop.mjs      # 要 target/debug/kwnote（ルートで cargo build）。JS⇔Rust の同期コード往復とマージ一致（乱数200件）

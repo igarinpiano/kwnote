@@ -22,7 +22,7 @@ const kw = (data, ...args) =>
   execFileSync(bin, ["--data", data, ...args], { encoding: "utf8", env: { ...process.env, KWNOTE_HOME: tmp } });
 const norm = (doc) => {
   const rec = (r) => {
-    const o = { ...r, completedTurns: [...(r.completedTurns || [])].sort(), updatedAt: r.updatedAt || 0 };
+    const o = { ...r, completedTurns: [...(r.completedTurns || [])].sort((a, b) => a - b), updatedAt: r.updatedAt || 0 };
     if (!o.deleted) delete o.deleted;
     if (o.note === undefined && "question" in o) o.note = "";
     return JSON.stringify(Object.keys(o).sort().reduce((a, k) => ((a[k] = o[k]), a), {}));
@@ -31,6 +31,8 @@ const norm = (doc) => {
     items: (doc.items || []).map(rec).sort(),
     sentences: (doc.sentences || []).map(rec).sort(),
     n: JSON.stringify(doc.settings?.n ?? [1, 3, 7, 14]),
+    order: doc.settings?.order ?? null,
+    limit: doc.settings?.limit ?? null,
   };
 };
 let fails = 0;
@@ -46,14 +48,18 @@ const randDoc = () => {
   const ids = ["a", "b", "c", "d", "e"];
   const items = ids.filter(() => rnd(3)).map((id) => ({
     id: "id_" + id, question: "問" + id + rnd(3), answer: "答" + rnd(5), note: rnd(2) ? "" : "n" + rnd(9),
-    registeredDate: "2026-09-0" + (1 + rnd(9)), completedTurns: [1, 2, 3, 4].filter(() => rnd(2)),
+    registeredDate: "2026-09-0" + (1 + rnd(9)), completedTurns: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].filter(() => rnd(2)),
     updatedAt: rnd(3) * 1000, ...(rnd(5) ? {} : { deleted: true }),
   }));
   const sentences = ids.filter(() => rnd(2)).map((id) => ({
     id: "s_" + id, text: "sentence " + id + rnd(4), registeredDate: "2026-09-10",
     completedTurns: [1, 2].filter(() => rnd(2)), updatedAt: rnd(3) * 1000,
   }));
-  return { version: 2, items, sentences, settings: { n: [rnd(4), 3, 7, 14], updatedAt: rnd(3) } };
+  // settings: 1–12 turns, sometimes an order / daily limit
+  const settings = { n: [rnd(4), 3, 7, 14, 30, 60, 90, 120, 150, 180, 240, 365].slice(0, 1 + rnd(12)), updatedAt: rnd(3) };
+  if (rnd(2)) settings.order = ["random", "due", "oldest", "newest"][rnd(4)];
+  if (rnd(2)) settings.limit = rnd(30);
+  return { version: 2, items, sentences, settings };
 };
 
 // 1. JS code -> Rust

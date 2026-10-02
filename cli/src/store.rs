@@ -111,6 +111,36 @@ pub fn save_config(c: &Config) -> Result<()> {
     write_atomic(&config_path(), &serde_json::to_string_pretty(c)?)
 }
 
+/// The TUI's lists for today, kept across restarts so their order and the
+/// daily cap (`settings.limit`) hold for the whole day. The web app keeps
+/// the same thing per browser in localStorage `kw_today`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TodayState {
+    /// data file the lists belong to
+    pub data: String,
+    pub date: String,
+    /// settings the lists were built with (intervals, order, limit)
+    pub sig: String,
+    pub sentences: Vec<(String, u8)>,
+    pub qa: Vec<(String, u8)>,
+}
+
+fn today_path() -> PathBuf {
+    home_dir().join("today.json")
+}
+
+pub fn load_today() -> Option<TodayState> {
+    let t: TodayState = serde_json::from_str(&fs::read_to_string(today_path()).ok()?).ok()?;
+    (t.data == data_path().display().to_string()).then_some(t)
+}
+
+/// Best effort: losing it only means a fresh list on the next start.
+pub fn save_today(t: &TodayState) {
+    if let Ok(s) = serde_json::to_string(t) {
+        let _ = write_atomic(&today_path(), &s);
+    }
+}
+
 pub fn random_key() -> String {
     let mut buf = [0u8; 12];
     getrandom::fill(&mut buf).expect("OS random source");

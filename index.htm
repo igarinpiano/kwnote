@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
-<link rel="stylesheet" href="style.css?v=9c556402d9">
+<link rel="stylesheet" href="style.css?v=b279ce4a1f">
 
 </head>
 <body>
@@ -113,13 +113,18 @@
   <br>
 
   <p class="section-title">Interaval Settings:</p>
+  <div class="settings-row" id="turn-inputs"></div>
   <div class="settings-row">
-    <label>turn 1: <input type="number" id="n1" min="0"></label>
-    <label>turn 2: <input type="number" id="n2" min="0"></label>
-    <label>turn 3: <input type="number" id="n3" min="0"></label>
-    <label>turn 4: <input type="number" id="n4" min="0"></label>
+    <button id="turn-add-btn" title="表示回数を 1 回増やす / Add a turn">＋1回</button>
+    <button id="turn-del-btn" title="最後の回を消す / Remove the last turn">－1回</button>
+    <label>プリセット Preset: <select id="preset-select"><option value="">選ぶ…</option></select></label>
+  </div>
+  <div class="settings-row">
+    <label>並び順 Order: <select id="order-select"></select></label>
+    <label>1日の上限 Limit: <input type="number" id="limit-input" min="0"> 件（0 = なし）</label>
     <button id="save-settings-btn">SAVE</button>
   </div>
+  <p class="settings-note" id="settings-note"></p>
   <br>
 
   <p class="section-title">Sync:</p>
@@ -169,9 +174,9 @@
   <span class="sb-msg" id="sb-msg"></span>
 </div>
 
-<script src="qr.js?v=9c556402d9"></script>
-<script src="sync.js?v=9c556402d9"></script>
-<script src="script.js?v=9c556402d9">
+<script src="qr.js?v=b279ce4a1f"></script>
+<script src="sync.js?v=b279ce4a1f"></script>
+<script src="script.js?v=b279ce4a1f">
 </script>
 </body>
 </html>

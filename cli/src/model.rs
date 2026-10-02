@@ -8,14 +8,63 @@
 //!   `deleted` is OR-ed (this covers legacy data that has no `updatedAt`)
 //! * deletions are tombstones (`deleted: true`) so they propagate
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{Duration, Local, NaiveDate};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
-pub const TURNS: u8 = 4;
 pub const DEFAULT_INTERVALS: [i64; 4] = [1, 3, 7, 14];
+/// Most turns (表示回数) the settings UIs accept. Stored data may hold more
+/// (anything up to 255 is kept), it is only an input limit.
+pub const MAX_TURNS: usize = 20;
+
+/// Interval presets offered by the web app, `kwnote settings --preset` and
+/// `:set preset=` (same list as PRESETS in ../../script.js).
+pub const PRESETS: &[(&str, &str, &[i64])] = &[
+    ("standard", "標準", &[1, 3, 7, 14]),
+    ("dense", "こまめ", &[1, 2, 3, 5, 7, 10, 14]),
+    ("long", "長期", &[1, 3, 7, 14, 30, 60, 120]),
+    ("daily", "毎日", &[1, 2, 3, 4, 5, 6, 7]),
+];
+
+pub fn preset(name: &str) -> Option<&'static [i64]> {
+    PRESETS
+        .iter()
+        .find(|(k, ja, _)| k.eq_ignore_ascii_case(name.trim()) || *ja == name.trim())
+        .map(|(_, _, n)| *n)
+}
+
+/// Order of today's list (`settings.order`, same values as script.js).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Order {
+    /// shuffled (the original behaviour)
+    #[default]
+    Random,
+    /// most overdue first (earliest scheduled date)
+    Due,
+    /// registered earliest first
+    Oldest,
+    /// registered latest first
+    Newest,
+}
+
+impl Order {
+    pub const ALL: [Order; 4] = [Order::Random, Order::Due, Order::Oldest, Order::Newest];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Order::Random => "random",
+            Order::Due => "due",
+            Order::Oldest => "oldest",
+            Order::Newest => "newest",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Order> {
+        Order::ALL.into_iter().find(|o| o.as_str() == s.trim())
+    }
+}
 
 fn null_default<'de, D, T>(d: D) -> Result<T, D::Error>
 where
@@ -41,7 +90,7 @@ fn lenient_turns<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
     let mut out: Vec<u8> = v
         .iter()
         .filter_map(|x| x.as_u64().or_else(|| x.as_f64().map(|f| f as u64)))
-        .filter(|t| (1..=TURNS as u64).contains(t))
+        .filter(|t| (1..=u8::MAX as u64).contains(t))
         .map(|t| t as u8)
         .collect();
     out.sort_unstable();
@@ -96,7 +145,7 @@ pub struct Sentence {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
-    #[serde(default = "default_intervals")]
+    #[serde(default = "default_intervals", deserialize_with = "lenient_intervals")]
     pub n: Vec<i64>,
     #[serde(default, deserialize_with = "lenient_i64")]
     pub updated_at: i64,
@@ -106,6 +155,24 @@ pub struct Settings {
 
 fn default_intervals() -> Vec<i64> {
     DEFAULT_INTERVALS.to_vec()
+}
+
+/// Any length (one entry per turn); bad values become 0, and a missing or
+/// empty list means the defaults (like `normSettings` in script.js).
+fn lenient_intervals<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<i64>, D::Error> {
+    let v = Option::<Vec<Value>>::deserialize(d)?.unwrap_or_default();
+    let n: Vec<i64> = v
+        .iter()
+        .map(|x| match x {
+            Value::Number(n) => n
+                .as_i64()
+                .unwrap_or_else(|| n.as_f64().unwrap_or(0.0) as i64),
+            Value::String(s) => s.trim().parse().unwrap_or(0),
+            _ => 0,
+        })
+        .map(|x| x.max(0))
+        .collect();
+    Ok(if n.is_empty() { default_intervals() } else { n })
 }
 
 impl Default for Settings {
@@ -118,10 +185,72 @@ impl Default for Settings {
     }
 }
 
+// `order` and `limit` live in `extra` so that the JSON round-trips exactly
+// as the web app wrote it (absent stays absent).
 impl Settings {
     pub fn interval(&self, turn: u8) -> i64 {
         self.n.get(turn as usize - 1).copied().unwrap_or(0)
     }
+
+    /// Number of turns (表示回数) = number of intervals.
+    pub fn turns(&self) -> u8 {
+        self.n.len().min(u8::MAX as usize) as u8
+    }
+
+    pub fn order(&self) -> Order {
+        self.extra
+            .get("order")
+            .and_then(Value::as_str)
+            .and_then(Order::parse)
+            .unwrap_or_default()
+    }
+
+    pub fn set_order(&mut self, o: Order) {
+        self.extra.insert("order".into(), Value::from(o.as_str()));
+    }
+
+    /// Daily cap per pane for today's list; 0 = no cap.
+    pub fn limit(&self) -> usize {
+        match self.extra.get("limit") {
+            Some(Value::Number(n)) => n.as_u64().or_else(|| n.as_f64().map(|f| f.max(0.0) as u64)),
+            Some(Value::String(s)) => s.trim().parse().ok(),
+            _ => None,
+        }
+        .unwrap_or(0) as usize
+    }
+
+    pub fn set_limit(&mut self, n: usize) {
+        self.extra.insert("limit".into(), Value::from(n));
+    }
+
+    /// One-line summary used by `kwnote settings`, `stats` and `:set`.
+    pub fn describe(&self) -> String {
+        let limit = match self.limit() {
+            0 => "none".to_string(),
+            n => n.to_string(),
+        };
+        format!(
+            "n={} ({} turns) order={} limit={limit}",
+            self.n
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+            self.n.len(),
+            self.order().as_str()
+        )
+    }
+}
+
+/// Validate user-entered intervals (settings UIs).
+pub fn check_intervals(n: &[i64]) -> Result<(), String> {
+    if n.is_empty() || n.len() > MAX_TURNS {
+        return Err(format!("give 1 to {MAX_TURNS} intervals"));
+    }
+    if n.iter().any(|x| *x < 0) {
+        return Err("intervals must be >= 0".into());
+    }
+    Ok(())
 }
 
 fn default_version() -> u32 {
@@ -271,9 +400,75 @@ pub fn due_turn<R: Record>(r: &R, settings: &Settings, today: NaiveDate) -> Opti
 
 /// The first unfinished turn and when it is scheduled. `None` = all done.
 pub fn next_turn<R: Record>(r: &R, settings: &Settings) -> Option<(u8, NaiveDate)> {
-    (1..=TURNS)
+    (1..=settings.turns())
         .find(|t| !r.completed_turns().contains(t))
         .map(|t| (t, sched_date(r, settings, t)))
+}
+
+/// Tiny xorshift so we don't need the `rand` crate just to shuffle.
+pub fn shuffle<T>(v: &mut [T]) {
+    let mut seed = [0u8; 8];
+    let _ = getrandom::fill(&mut seed);
+    let mut x = u64::from_le_bytes(seed) | 1;
+    for i in (1..v.len()).rev() {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        v.swap(i, (x % (i as u64 + 1)) as usize);
+    }
+}
+
+/// Today's list for one pane (port of `buildToday` in script.js).
+///
+/// `carry` comes first, in its order (entries of deleted records dropped);
+/// then the due records that aren't carried, sorted by `settings.order()`,
+/// only as many as still fit under `settings.limit()` (0 = no cap). Done
+/// entries stay in the list for the rest of the day, so they count toward
+/// the cap.
+pub fn build_today<R: Record>(
+    recs: &[R],
+    settings: &Settings,
+    today: NaiveDate,
+    carry: &[(String, u8)],
+) -> Vec<(String, u8)> {
+    let alive: HashSet<&str> = recs
+        .iter()
+        .filter(|r| !r.deleted())
+        .map(|r| r.id())
+        .collect();
+    let mut have: HashSet<&str> = HashSet::new();
+    let mut out: Vec<(String, u8)> = carry
+        .iter()
+        .filter(|(id, _)| alive.contains(id.as_str()) && have.insert(id.as_str()))
+        .cloned()
+        .collect();
+    let mut cand: Vec<(&R, u8, NaiveDate)> = recs
+        .iter()
+        .filter(|r| !have.contains(r.id()))
+        .filter_map(|r| {
+            let t = due_turn(r, settings, today)?;
+            Some((r, t, sched_date(r, settings, t)))
+        })
+        .collect();
+    match settings.order() {
+        Order::Random => shuffle(&mut cand),
+        Order::Due => cand.sort_by(|a, b| {
+            a.2.cmp(&b.2)
+                .then_with(|| a.0.registered_date().cmp(b.0.registered_date()))
+        }),
+        Order::Oldest => cand.sort_by(|a, b| a.0.registered_date().cmp(b.0.registered_date())),
+        Order::Newest => cand.sort_by(|a, b| b.0.registered_date().cmp(a.0.registered_date())),
+    }
+    let room = match settings.limit() {
+        0 => usize::MAX,
+        n => n.saturating_sub(out.len()),
+    };
+    out.extend(
+        cand.into_iter()
+            .take(room)
+            .map(|(r, t, _)| (r.id().to_string(), t)),
+    );
+    out
 }
 
 /// Toggle completion of `turn`. Returns true if it is now completed.
@@ -457,6 +652,75 @@ mod tests {
         assert_eq!(due_turn(&it, &s, d("2026-01-04")), Some(2));
         let it = item("x", 0, &[1, 2, 3, 4]);
         assert_eq!(due_turn(&it, &s, d("2027-01-01")), None);
+    }
+
+    #[test]
+    fn more_turns_and_settings_round_trip() {
+        let raw = r#"{"n":[1,2,"4",7,-3,30],"order":"due","limit":"2","updatedAt":5}"#;
+        let s: Settings = serde_json::from_str(raw).unwrap();
+        assert_eq!(s.n, vec![1, 2, 4, 7, 0, 30]);
+        assert_eq!(s.turns(), 6);
+        assert_eq!(s.order(), Order::Due);
+        assert_eq!(s.limit(), 2);
+        let empty: Settings = serde_json::from_str(r#"{"n":[]}"#).unwrap();
+        assert_eq!(empty.n, DEFAULT_INTERVALS.to_vec());
+        assert_eq!(empty.order(), Order::Random);
+        assert_eq!(empty.limit(), 0);
+        // untouched keys are not added when written back
+        let back = serde_json::to_value(&empty).unwrap();
+        assert!(back.get("order").is_none() && back.get("limit").is_none());
+
+        let d = |x: &str| parse_date(x).unwrap();
+        // turn 5 has interval 0 (the -3 above), so it is due at once
+        let it = item("x", 0, &[1, 2, 3, 4]);
+        assert_eq!(due_turn(&it, &s, d("2026-01-01")), Some(5));
+        let it = item("x", 0, &[1, 2, 3, 4, 5]);
+        assert_eq!(due_turn(&it, &s, d("2026-01-30")), None);
+        assert_eq!(due_turn(&it, &s, d("2026-01-31")), Some(6));
+        let it = item("x", 0, &[1, 2, 3, 4, 5, 6]);
+        assert_eq!(next_turn(&it, &s), None);
+        // turns above 4 survive parsing
+        let raw = r#"{"id":"a","completedTurns":[12,5,1]}"#;
+        let it: Item = serde_json::from_str(raw).unwrap();
+        assert_eq!(it.completed_turns, vec![1, 5, 12]);
+        assert_eq!(preset("long").unwrap().len(), 7);
+        assert_eq!(preset("毎日"), preset("daily"));
+        assert!(check_intervals(&[1; 21]).is_err() && check_intervals(&[]).is_err());
+    }
+
+    #[test]
+    fn todays_list_order_limit_and_carry() {
+        let mut s = Settings::default();
+        let d = parse_date("2026-02-01").unwrap();
+        let mut recs = vec![];
+        for (i, reg) in ["2026-01-05", "2026-01-01", "2026-01-03"]
+            .iter()
+            .enumerate()
+        {
+            let mut it = item(&format!("r{i}"), 0, &[]);
+            it.registered_date = reg.to_string();
+            recs.push(it);
+        }
+        let ids = |v: &[(String, u8)]| v.iter().map(|x| x.0.clone()).collect::<Vec<_>>();
+        s.set_order(Order::Oldest);
+        assert_eq!(ids(&build_today(&recs, &s, d, &[])), ["r1", "r2", "r0"]);
+        s.set_order(Order::Newest);
+        assert_eq!(ids(&build_today(&recs, &s, d, &[])), ["r0", "r2", "r1"]);
+        s.set_order(Order::Due);
+        assert_eq!(ids(&build_today(&recs, &s, d, &[])), ["r1", "r2", "r0"]);
+        s.set_limit(2);
+        let today = build_today(&recs, &s, d, &[]);
+        assert_eq!(ids(&today), ["r1", "r2"]);
+        // a done entry stays and keeps counting toward the cap
+        let carry = vec![("r0".to_string(), 1)];
+        assert_eq!(ids(&build_today(&recs, &s, d, &carry)), ["r0", "r1"]);
+        // reconcile with a full list adds nothing
+        assert_eq!(build_today(&recs, &s, d, &today), today);
+        recs[1].deleted = true;
+        assert_eq!(ids(&build_today(&recs, &s, d, &today)), ["r2", "r0"]);
+        s.set_limit(0);
+        s.set_order(Order::Random);
+        assert_eq!(build_today(&recs, &s, d, &[]).len(), 2);
     }
 
     #[test]

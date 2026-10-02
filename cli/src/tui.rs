@@ -24,8 +24,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::client;
 use crate::codec::{self, QrBlock};
 use crate::model::{
-    self, Doc, Item, Record, Sentence, due_turn, fmt_date, merge_docs, new_id, next_turn,
-    toggle_turn,
+    self, Doc, Item, Record, Sentence, fmt_date, merge_docs, new_id, next_turn, toggle_turn,
 };
 use crate::store;
 
@@ -52,25 +51,17 @@ impl Pane {
 
 const XP_BLUE: Color = Color::Rgb(0x0c, 0x4e, 0xd5);
 
+// same palette as --turnN-bg in style.css; turns past 8 keep the 8th colour
 fn turn_color(t: u8) -> Color {
     match t {
         1 => Color::Rgb(0x6f, 0x9c, 0xe8),
         2 => Color::Rgb(0x6c, 0xc0, 0x7a),
         3 => Color::Rgb(0xe0, 0xc0, 0x4c),
-        _ => Color::Rgb(0xe8, 0x8a, 0x5c),
-    }
-}
-
-/// Tiny xorshift so we don't need the `rand` crate just to shuffle.
-fn shuffle<T>(v: &mut [T]) {
-    let mut seed = [0u8; 8];
-    let _ = getrandom::fill(&mut seed);
-    let mut x = u64::from_le_bytes(seed) | 1;
-    for i in (1..v.len()).rev() {
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        v.swap(i, (x % (i as u64 + 1)) as usize);
+        4 => Color::Rgb(0xe8, 0x8a, 0x5c),
+        5 => Color::Rgb(0xb0, 0x8c, 0xe0),
+        6 => Color::Rgb(0xe0, 0x82, 0xb4),
+        7 => Color::Rgb(0x5c, 0xc0, 0xc0),
+        _ => Color::Rgb(0xa0, 0xa8, 0x70),
     }
 }
 
@@ -80,12 +71,6 @@ fn find<'a, R: Record>(v: &'a [R], id: &str) -> Option<&'a R> {
 
 fn find_mut<'a, R: Record>(v: &'a mut [R], id: &str) -> Option<&'a mut R> {
     v.iter_mut().find(|r| r.id() == id)
-}
-
-fn due_list<R: Record>(v: &[R], doc: &Doc, today: NaiveDate) -> Vec<(String, u8)> {
-    v.iter()
-        .filter_map(|r| due_turn(r, &doc.settings, today).map(|t| (r.id().to_string(), t)))
-        .collect()
 }
 
 fn mask(s: &str) -> String {
@@ -248,6 +233,10 @@ pub struct App {
     page: usize,
     quit: bool,
     qr_only: bool,
+    /// the date today's lists were built for
+    list_date: Option<NaiveDate>,
+    /// keep today's lists in today.json (off in tests)
+    persist: bool,
 }
 
 const HELP: &[(&str, &str)] = &[
@@ -264,7 +253,7 @@ const HELP: &[(&str, &str)] = &[
     ("zR / zM", "show all / hide all answers"),
     ("c", "OK — mark this turn done (again = undo it)"),
     ("u", "undo the last change (mark, edit, delete)"),
-    ("r", "reshuffle today's list"),
+    ("r", "reshuffle today's list (same rows)"),
     ("t", "toggle view: Today ⇄ All records"),
     ("編集 Edit", ""),
     (
@@ -295,7 +284,19 @@ const HELP: &[(&str, &str)] = &[
         "sync with another machine's `kwnote serve`",
     ),
     (":date YYYY-MM-DD|+N|-N|today", "change the reference date"),
-    (":set n=1,3,7,14", "turn intervals in days (also :set n2=4)"),
+    (
+        ":set n=1,3,7,14,30",
+        "intervals in days, one per turn (1–20 turns; n5=30 adds/edits one)",
+    ),
+    (
+        ":set turns=6  preset=long",
+        "number of turns · presets: standard dense long daily",
+    ),
+    (
+        ":set order=due  limit=20",
+        "today's order: random due oldest newest · daily cap (0 = none)",
+    ),
+    (":set", "show the current settings"),
     (
         ":all  :today  :stats  :e!",
         "view all / today · statistics · reload from disk",
@@ -323,6 +324,8 @@ impl App {
             page: 10,
             quit: false,
             qr_only: false,
+            list_date: None,
+            persist: false,
         };
         app.refresh();
         if app.rows(Pane::Qa).is_empty() && !app.rows(Pane::Sentences).is_empty() {
@@ -354,59 +357,107 @@ impl App {
         self.reconcile();
     }
 
-    /// Recompute today's lists from scratch (new shuffle), like the web
-    /// app's doRefresh().
+    /// Rebuild today's lists, like the web app's refreshDueList(): a new
+    /// order (per `settings.order`), filled up to `settings.limit`. Rows
+    /// already finished today stay and keep counting toward the cap.
     fn refresh(&mut self) {
-        for pane in [Pane::Sentences, Pane::Qa] {
-            let mut due = match pane {
-                Pane::Sentences => due_list(&self.doc.sentences, &self.doc, self.today),
-                Pane::Qa => due_list(&self.doc.items, &self.doc, self.today),
-            };
-            shuffle(&mut due);
-            let ps = &mut self.panes[pane as usize];
-            ps.due = due;
-            ps.sel = 0;
-        }
+        let same_day = self.list_date == Some(self.today);
+        let carry: [Vec<(String, u8)>; 2] = [Pane::Sentences, Pane::Qa].map(|p| {
+            if !same_day {
+                return vec![];
+            }
+            self.panes[p as usize]
+                .due
+                .iter()
+                .filter(|e| {
+                    let row = RowRef {
+                        id: e.0.clone(),
+                        turn: Some(e.1),
+                        sched: None,
+                    };
+                    self.is_done_today(p, &row)
+                })
+                .cloned()
+                .collect()
+        });
+        self.build(carry);
+        self.select_first_open();
         self.revealed.clear();
     }
 
-    /// After a save/sync: keep the current order, drop deleted records and
-    /// append anything that became due.
-    fn reconcile(&mut self) {
-        for pane in [Pane::Sentences, Pane::Qa] {
-            let (fresh, alive): (Vec<(String, u8)>, HashSet<String>) = match pane {
-                Pane::Sentences => (
-                    due_list(&self.doc.sentences, &self.doc, self.today),
-                    self.doc
-                        .sentences
-                        .iter()
-                        .filter(|r| !r.deleted)
-                        .map(|r| r.id.clone())
-                        .collect(),
-                ),
-                Pane::Qa => (
-                    due_list(&self.doc.items, &self.doc, self.today),
-                    self.doc
-                        .items
-                        .iter()
-                        .filter(|r| !r.deleted)
-                        .map(|r| r.id.clone())
-                        .collect(),
-                ),
-            };
-            let ps = &mut self.panes[pane as usize];
-            ps.due.retain(|(id, _)| alive.contains(id));
-            for (id, t) in fresh {
-                if !ps.due.iter().any(|(i, _)| *i == id) {
-                    ps.due.push((id, t));
-                }
-            }
+    /// Start each pane on its first unfinished row.
+    fn select_first_open(&mut self) {
+        for p in [Pane::Sentences, Pane::Qa] {
+            let rows = self.rows(p);
+            let first = rows.iter().position(|r| !self.is_done(p, r)).unwrap_or(0);
+            self.panes[p as usize].sel = first;
         }
+    }
+
+    /// After a save/sync: keep the current lists and their order, drop
+    /// deleted records and append anything that became due (within the cap).
+    fn reconcile(&mut self) {
+        let carry = [Pane::Sentences, Pane::Qa].map(|p| self.panes[p as usize].due.clone());
+        self.build(carry);
         for p in [Pane::Sentences, Pane::Qa] {
             let n = self.rows(p).len();
             let ps = &mut self.panes[p as usize];
             ps.sel = ps.sel.min(n.saturating_sub(1));
         }
+    }
+
+    fn build(&mut self, carry: [Vec<(String, u8)>; 2]) {
+        let d = &self.doc;
+        let [cs, cq] = carry;
+        self.panes[Pane::Sentences as usize].due =
+            model::build_today(&d.sentences, &d.settings, self.today, &cs);
+        self.panes[Pane::Qa as usize].due =
+            model::build_today(&d.items, &d.settings, self.today, &cq);
+        self.list_date = Some(self.today);
+        self.save_today();
+    }
+
+    fn settings_sig(&self) -> String {
+        let s = &self.doc.settings;
+        format!("{:?}|{}|{}", s.n, s.order().as_str(), s.limit())
+    }
+
+    fn save_today(&self) {
+        if !self.persist {
+            return;
+        }
+        store::save_today(&store::TodayState {
+            data: store::data_path().display().to_string(),
+            date: fmt_date(self.today),
+            sig: self.settings_sig(),
+            sentences: self.panes[Pane::Sentences as usize].due.clone(),
+            qa: self.panes[Pane::Qa as usize].due.clone(),
+        });
+    }
+
+    /// Pick up today's lists from the last run (same data file and date):
+    /// as they were if the settings are unchanged, else rebuilt keeping the
+    /// rows already finished.
+    pub fn restore_today(&mut self, saved: Option<store::TodayState>) {
+        self.persist = true;
+        match saved {
+            Some(t) => self.apply_saved(t),
+            None => self.save_today(),
+        }
+    }
+
+    fn apply_saved(&mut self, t: store::TodayState) {
+        if t.date != fmt_date(self.today) {
+            return self.save_today();
+        }
+        self.panes[Pane::Sentences as usize].due = t.sentences;
+        self.panes[Pane::Qa as usize].due = t.qa;
+        if t.sig == self.settings_sig() {
+            self.reconcile();
+        } else {
+            self.refresh();
+        }
+        self.select_first_open();
     }
 
     fn poll_disk(&mut self) {
@@ -485,10 +536,15 @@ impl App {
     }
 
     fn is_done(&self, pane: Pane, row: &RowRef) -> bool {
-        let Some(t) = row.turn else { return true };
-        if self.panes[pane as usize].all {
+        if row.turn.is_some() && self.panes[pane as usize].all {
             return false;
         }
+        self.is_done_today(pane, row)
+    }
+
+    /// Whether the row's turn is completed (today's-list semantics).
+    fn is_done_today(&self, pane: Pane, row: &RowRef) -> bool {
+        let Some(t) = row.turn else { return true };
         match pane {
             Pane::Sentences => {
                 find(&self.doc.sentences, &row.id).is_some_and(|r| r.completed_turns.contains(&t))
@@ -893,43 +949,84 @@ impl App {
     }
 
     fn set_option(&mut self, arg: &str) {
-        let Some((k, v)) = arg.split_once('=') else {
-            let n = &self.doc.settings.n;
-            return self.info(format!(
-                "n={}",
-                n.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
-            ));
-        };
-        let mut n = self.doc.settings.n.clone();
-        n.resize(4, 0);
-        let parsed: Option<()> = (|| {
-            match k.trim() {
-                "n" => {
-                    let vals: Vec<i64> = v
-                        .split(',')
-                        .map(|x| x.trim().parse().ok())
-                        .collect::<Option<_>>()?;
-                    if vals.len() != 4 {
-                        return None;
-                    }
-                    n = vals;
-                }
-                k if k.len() == 2 && k.starts_with('n') => {
-                    let i: usize = k[1..].parse().ok()?;
-                    *n.get_mut(i.checked_sub(1)?)? = v.trim().parse().ok()?;
-                }
-                _ => return None,
-            }
-            Some(())
-        })();
-        if parsed.is_none() || n.iter().any(|x| *x < 0) {
-            return self.error("usage: :set n=1,3,7,14  or  :set n2=4");
+        const USAGE: &str = "usage: :set n=1,3,7,14,30 · n5=30 · preset=long · order=random|due|oldest|newest · limit=20";
+        if arg.trim().is_empty() {
+            return self.info(self.doc.settings.describe());
         }
-        self.doc.settings.n = n;
-        self.doc.settings.updated_at = model::now_ms();
+        let mut s = self.doc.settings.clone();
+        for opt in arg.split_whitespace() {
+            let Some((k, v)) = opt.split_once('=') else {
+                return self.error(USAGE);
+            };
+            let ok = match k {
+                "n" => match v.split(',').map(|x| x.trim().parse().ok()).collect() {
+                    Some(n) => {
+                        s.n = n;
+                        true
+                    }
+                    None => false,
+                },
+                // nN=days changes one turn; n(len+1)=days adds a turn
+                k if k.starts_with('n') && k.len() > 1 => {
+                    match (k[1..].parse::<usize>(), v.trim().parse::<i64>()) {
+                        (Ok(i), Ok(d)) if i >= 1 && i <= s.n.len() => {
+                            s.n[i - 1] = d;
+                            true
+                        }
+                        (Ok(i), Ok(d)) if i == s.n.len() + 1 => {
+                            s.n.push(d);
+                            true
+                        }
+                        _ => false,
+                    }
+                }
+                "turns" => match v.trim().parse::<usize>() {
+                    // more turns repeat the last interval doubled
+                    Ok(t) if (1..=model::MAX_TURNS).contains(&t) => {
+                        while s.n.len() < t {
+                            let last = s.n.last().copied().unwrap_or(1);
+                            s.n.push((last * 2).max(last + 1));
+                        }
+                        s.n.truncate(t);
+                        true
+                    }
+                    _ => false,
+                },
+                "preset" => match model::preset(v) {
+                    Some(n) => {
+                        s.n = n.to_vec();
+                        true
+                    }
+                    None => false,
+                },
+                "order" => match model::Order::parse(v) {
+                    Some(o) => {
+                        s.set_order(o);
+                        true
+                    }
+                    None => false,
+                },
+                "limit" => match v.trim().parse() {
+                    Ok(n) => {
+                        s.set_limit(n);
+                        true
+                    }
+                    Err(_) => false,
+                },
+                _ => false,
+            };
+            if !ok {
+                return self.error(USAGE);
+            }
+        }
+        if let Err(e) = model::check_intervals(&s.n) {
+            return self.error(e);
+        }
+        s.updated_at = model::next_stamp(self.doc.settings.updated_at);
+        self.doc.settings = s;
         self.save();
         self.refresh();
-        self.info(format!("intervals set to {:?}", self.doc.settings.n));
+        self.info(format!("set {}", self.doc.settings.describe()));
     }
 
     // ------------------------------------------------------------ keys
@@ -1171,7 +1268,12 @@ impl App {
                 }
             }
             (KeyCode::Char('r'), false) => {
-                self.refresh();
+                // only reorders: the same rows, so the daily cap still holds
+                for ps in &mut self.panes {
+                    model::shuffle(&mut ps.due);
+                    ps.sel = 0;
+                }
+                self.save_today();
                 self.info("reshuffled");
             }
             (KeyCode::Char('t'), false) => {
@@ -1450,7 +1552,7 @@ impl App {
                 (it.registered_date.clone(), it.completed_turns.clone())
             }
         };
-        let turns_txt: Vec<String> = (1..=model::TURNS)
+        let turns_txt: Vec<String> = (1..=self.doc.settings.turns().max(1))
             .map(|t| {
                 if turns.contains(&t) {
                     format!("■{t}")
@@ -1686,6 +1788,7 @@ fn draw_qr(f: &mut Frame, q: &QrView) {
 
 pub fn run(today: NaiveDate, qr_chunk: Option<usize>) -> Result<()> {
     let mut app = App::new(store::load()?, today);
+    app.restore_today(store::load_today());
     if let Some(chunk) = qr_chunk {
         app.open_qr(chunk)?;
         app.qr_only = true;
@@ -1733,6 +1836,17 @@ mod tests {
         App::new(doc, model::parse_date("2026-01-02").unwrap())
     }
 
+    /// Tests that save share one temp data file (the path can be set only
+    /// once per process): run them one at a time, each from an empty file.
+    fn temp_data() -> std::sync::MutexGuard<'static, ()> {
+        static DISK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let guard = DISK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("kwnote-tui-{}", std::process::id()));
+        store::set_data_path(dir.join("data.json"));
+        let _ = std::fs::remove_file(store::data_path());
+        guard
+    }
+
     fn press(a: &mut App, code: KeyCode) {
         a.on_key(KeyEvent::new(code, KeyModifiers::NONE));
     }
@@ -1756,8 +1870,8 @@ mod tests {
     /// renderer (writes go to a temp data file).
     #[test]
     fn review_session_end_to_end() {
+        let _disk = temp_data();
         let dir = std::env::temp_dir().join(format!("kwnote-tui-{}", std::process::id()));
-        store::set_data_path(dir.join("data.json"));
         let mut doc = Doc::default();
         doc.items.push(Item {
             id: "tui_q".into(),
@@ -1842,6 +1956,53 @@ mod tests {
         assert_eq!(disk.settings.n, vec![2, 4, 8, 16]);
         assert!(disk.sentences.iter().any(|s| s.text == "brand new"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn turns_order_and_daily_cap() {
+        let _disk = temp_data();
+        let cmd = |a: &mut App, s: &str| {
+            press(a, KeyCode::Char(':'));
+            for c in s.chars() {
+                a.on_key(key(c));
+            }
+            press(a, KeyCode::Enter);
+        };
+        let mut a = app_with(5);
+        assert_eq!(a.rows(Pane::Qa).len(), 5);
+        cmd(&mut a, "set limit=2 order=oldest");
+        assert!(!a.msg_err, "{}", a.msg);
+        assert_eq!(a.rows(Pane::Qa).len(), 2);
+        a.focus = Pane::Qa;
+        a.on_key(key('c'));
+        let done = a.rows(Pane::Qa)[0].id.clone();
+        // a finished row stays and keeps its place under the cap
+        cmd(&mut a, "set order=newest");
+        let rows = a.rows(Pane::Qa);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|r| r.id == done));
+        cmd(&mut a, "set turns=6");
+        assert_eq!(a.doc.settings.n, vec![1, 3, 7, 14, 28, 56]);
+        cmd(&mut a, "set preset=daily n8=9");
+        assert_eq!(a.doc.settings.n, vec![1, 2, 3, 4, 5, 6, 7, 9]);
+        cmd(&mut a, "set turns=21");
+        assert!(a.msg_err);
+        assert!(screen(&mut a).contains("□8"));
+
+        // a restart on the same day gets the very same list back
+        let saved = store::TodayState {
+            date: fmt_date(a.today),
+            sig: a.settings_sig(),
+            qa: a.panes[Pane::Qa as usize].due.clone(),
+            ..Default::default()
+        };
+        let mut b = App::new(a.doc.clone(), a.today);
+        b.apply_saved(saved.clone());
+        assert_eq!(b.panes[Pane::Qa as usize].due, saved.qa);
+        // next day: a fresh list
+        let mut c = App::new(a.doc.clone(), a.today + chrono::Duration::days(1));
+        c.apply_saved(saved);
+        assert!(!c.panes[Pane::Qa as usize].due.contains(&(done.clone(), 1)));
     }
 
     #[test]
