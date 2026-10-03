@@ -16,11 +16,14 @@ use clap::{Parser, Subcommand};
 
 use crate::model::{Doc, Item, Record, Sentence, fmt_date, merge_docs, new_id, now_ms};
 
+const QR_TRADEMARK: &str = "QR Code is a registered trademark of DENSO WAVE INCORPORATED.";
+
 #[derive(Parser)]
 #[command(
     name = "kwnote",
     version,
-    about = "Spaced-repetition memory notes: vim-style TUI, LAN sync server and QR sync"
+    about = "Spaced-repetition memory notes: vim-style TUI, LAN sync server and QR sync",
+    after_help = QR_TRADEMARK
 )]
 struct Cli {
     /// Data file (default: $KWNOTE_DATA or <data dir>/kwnote/data.json)
@@ -89,11 +92,13 @@ enum Cmd {
         chunk: usize,
     },
     /// Show the data as an animated QR sequence (scan it from the web app)
+    #[command(after_help = QR_TRADEMARK)]
     Qr {
         #[arg(long, default_value_t = codec::DEFAULT_CHUNK)]
         chunk: usize,
     },
     /// Serve the web app + sync API on the local network
+    #[command(after_help = QR_TRADEMARK)]
     Serve {
         #[arg(short, long, default_value_t = 7878)]
         port: u16,

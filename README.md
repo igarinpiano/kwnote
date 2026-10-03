@@ -198,6 +198,8 @@ pbpaste | kwnote import -          # クリップボードの同期コードを�
 
 表示中のキー: `Space` 一時停止 / `h` `l`（`←` `→`）前・次の QR / `+` 速く・`-` 遅く / `q` `Esc` 終了
 
+速さは「1 秒に何枚切り替えるか」（0.5〜8 枚/秒、既定 2.5）と、全部を一巡するのにかかる秒数で表示されます。Web アプリの SHOW QR も同じです（「遅く」「速く」ボタン）。
+
 ### `kwnote serve` — LAN 同期サーバー
 
 Web アプリを配信し、同期を受け付けます。起動すると URL と、それを開くための QR が表示されます。止めるのは `Ctrl-C`。
@@ -292,3 +294,9 @@ vim と同じ感覚で操作できます（ターミナル版のみ。Web 版は
 | `:all` / `:today` | 両方の一覧を全部・今日の分に |
 | `:stats` | 統計を表示 |
 | `:help` | ヘルプ |
+
+## 商標・ライセンス
+
+- QRコードは株式会社デンソーウェーブの登録商標です。 / QR Code is a registered trademark of DENSO WAVE INCORPORATED.
+- QR コードの生成は自前の実装（`qr.js`）と Rust の [`qrcode`](https://crates.io/crates/qrcode) クレート（MIT / Apache-2.0）です。読み取りはブラウザの `BarcodeDetector` を使い、無い環境（iPhone Safari など）だけ [jsQR](https://github.com/cozmo/jsQR)（Apache-2.0）を CDN から読み込みます。
+- CLI が使っているそのほかのクレートのライセンスは、各クレートに従います（`cli/Cargo.toml` 参照）。

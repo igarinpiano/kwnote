@@ -214,6 +214,7 @@ input[type=text], input[type=date], textarea, input[type=number]{
 .sync-help summary{cursor:pointer;}
 .sync-help ul{margin:6px 0 0; padding-left:20px;}
 .sync-help code{background:#fff; padding:0 4px; border:1px solid #d2cba4;}
+.tm-note{font-size:0.7rem; color:#666; margin:8px 0 0;}
 
 /* ---- dialogs (XP window) ---- */
 .modal-backdrop{

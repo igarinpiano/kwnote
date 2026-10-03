@@ -251,29 +251,38 @@
     [bPrev, bPause, bNext, bSlow, bFast].forEach(function(b){ ctrl.appendChild(b); });
     var hint = el("p", "modal-hint", opts.hint ||
       "受け取る端末で「SCAN QR」を押してこの画面を映してください。コードは自動で切り替わり、順不同で集まれば完了します。");
-    d.body.appendChild(canvas); d.body.appendChild(info); d.body.appendChild(ctrl); d.body.appendChild(hint);
+    var tm = el("p", "tm-note", "QRコードは株式会社デンソーウェーブの登録商標です。");
+    d.body.appendChild(canvas); d.body.appendChild(info); d.body.appendChild(ctrl); d.body.appendChild(hint); d.body.appendChild(tm);
 
-    var idx = 0, paused = false, interval = 400, timer = null;
+    // 速さは「1 秒に何枚」で表す（速く = 数字が増える。間隔 ms だと速くすると数字が減って逆向きに見える）。
+    // 段階は cli/src/tui.rs の QR_RATES と同じ。
+    var RATES = [0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8];
+    var idx = 0, paused = false, rate = 4, timer = null;
     var codes = frames.map(function(f){ return KWQR.encode(f, "M"); });
+    function num(x){ return String(Math.round(x * 10) / 10); }
     function paint(){
       var px = Math.min(window.innerWidth - 48, window.innerHeight - 220, 520);
       KWQR.draw(canvas, codes[idx], Math.max(160, px) * (window.devicePixelRatio || 1));
-      info.textContent = (idx + 1) + " / " + codes.length + (paused ? "  (paused)" : "") + "  ·  " + interval + " ms";
+      var n = codes.length, r = RATES[rate];
+      info.textContent = (idx + 1) + " / " + n + (paused ? "  (paused)" : "") +
+        (n > 1 ? "  ·  " + num(r) + " 枚/秒（一巡 約 " + num(n / r) + " 秒）" : "");
       bPause.textContent = paused ? "▶︎ play" : "❚❚";
+      bSlow.disabled = n < 2 || rate === 0;
+      bFast.disabled = n < 2 || rate === RATES.length - 1;
     }
     function loop(){
       clearTimeout(timer);
       if(!paused && codes.length > 1){
-        timer = setTimeout(function(){ idx = (idx + 1) % codes.length; paint(); loop(); }, interval);
+        timer = setTimeout(function(){ idx = (idx + 1) % codes.length; paint(); loop(); }, 1000 / RATES[rate]);
       }
     }
     function step(dlt){ paused = true; idx = (idx + dlt + codes.length) % codes.length; paint(); loop(); }
-    function speed(dlt){ interval = Math.min(3000, Math.max(120, interval + dlt)); paint(); loop(); }
+    function speed(dlt){ rate = Math.min(RATES.length - 1, Math.max(0, rate + dlt)); paint(); loop(); }
     bPrev.onclick = function(){ step(-1); };
     bNext.onclick = function(){ step(1); };
     bPause.onclick = function(){ paused = !paused; paint(); loop(); };
-    bSlow.onclick = function(){ speed(100); };
-    bFast.onclick = function(){ speed(-100); };
+    bSlow.onclick = function(){ speed(-1); };
+    bFast.onclick = function(){ speed(1); };
     d.cleanup.push(function(){ clearTimeout(timer); });
     paint(); loop();
   }

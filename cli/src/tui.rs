@@ -178,12 +178,35 @@ struct Form {
     focus: usize,
 }
 
+/// QR speeds in frames per second (same steps as RATES in ../../sync.js).
+/// Shown as a rate, not as an interval in ms: "faster" then makes the number
+/// go up instead of down.
+const QR_RATES: [f64; 10] = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0];
+const QR_DEFAULT_RATE: usize = 4;
+
 struct QrView {
     blocks: Vec<QrBlock>,
     idx: usize,
     paused: bool,
-    interval: Duration,
+    /// index into QR_RATES
+    rate: usize,
     last: Instant,
+}
+
+impl QrView {
+    fn interval(&self) -> Duration {
+        Duration::from_secs_f64(1.0 / QR_RATES[self.rate])
+    }
+}
+
+/// 2.5 -> "2.5", 3.0 -> "3"
+fn short_num(x: f64) -> String {
+    let r = (x * 10.0).round() / 10.0;
+    if r.fract() == 0.0 {
+        format!("{r:.0}")
+    } else {
+        format!("{r:.1}")
+    }
 }
 
 enum Mode {
@@ -887,7 +910,7 @@ impl App {
             blocks,
             idx: 0,
             paused: false,
-            interval: Duration::from_millis(350),
+            rate: QR_DEFAULT_RATE,
             last: Instant::now(),
         });
         Ok(())
@@ -1163,15 +1186,11 @@ impl App {
                     Mode::Qr(q)
                 }
                 KeyCode::Char('+') | KeyCode::Char('=') => {
-                    q.interval = q
-                        .interval
-                        .saturating_sub(Duration::from_millis(50))
-                        .max(Duration::from_millis(100));
+                    q.rate = (q.rate + 1).min(QR_RATES.len() - 1);
                     Mode::Qr(q)
                 }
                 KeyCode::Char('-') => {
-                    q.interval =
-                        (q.interval + Duration::from_millis(50)).min(Duration::from_secs(3));
+                    q.rate = q.rate.saturating_sub(1);
                     Mode::Qr(q)
                 }
                 _ => Mode::Qr(q),
@@ -1295,7 +1314,7 @@ impl App {
 
     pub fn tick(&mut self) {
         if let Mode::Qr(q) = &mut self.mode {
-            if !q.paused && q.last.elapsed() >= q.interval {
+            if !q.paused && q.last.elapsed() >= q.interval() {
                 q.idx = (q.idx + 1) % q.blocks.len();
                 q.last = Instant::now();
             }
@@ -1647,7 +1666,7 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
 
 fn draw_help(f: &mut Frame, scroll: u16) {
     let area = centered(f.area(), 84, f.area().height.saturating_sub(2));
-    let lines: Vec<TLine> = HELP
+    let mut lines: Vec<TLine> = HELP
         .iter()
         .map(|(k, v)| {
             if v.is_empty() {
@@ -1660,6 +1679,10 @@ fn draw_help(f: &mut Frame, scroll: u16) {
             }
         })
         .collect();
+    lines.push(TLine::from(""));
+    lines.push(TLine::from(
+        "QR Code is a registered trademark of DENSO WAVE INCORPORATED.".dark_gray(),
+    ));
     f.render_widget(Clear, area);
     f.render_widget(
         Paragraph::new(lines).scroll((scroll, 0)).block(
@@ -1736,12 +1759,21 @@ fn draw_qr(f: &mut Frame, q: &QrView) {
     let block = &q.blocks[q.idx];
     let need_w = block.width() as u16;
     let need_h = block.height_lines() as u16 + 2;
+    let n = q.blocks.len();
+    let speed = if n > 1 {
+        let r = QR_RATES[q.rate];
+        format!(
+            "  ·  {} frames/s, all {n} in ~{} s",
+            short_num(r),
+            short_num(n as f64 / r)
+        )
+    } else {
+        String::new()
+    };
     let caption = format!(
-        " frame {}/{}{}  ·  space pause · h/l step · + faster · - slower ({} ms) · q close ",
+        " frame {}/{n}{}{speed}  ·  space pause · h/l step · + faster · - slower · q close ",
         q.idx + 1,
-        q.blocks.len(),
         if q.paused { " (paused)" } else { "" },
-        q.interval.as_millis()
     );
     if area.width < need_w || area.height < need_h {
         let msg = format!(
@@ -2003,6 +2035,30 @@ mod tests {
         let mut c = App::new(a.doc.clone(), a.today + chrono::Duration::days(1));
         c.apply_saved(saved);
         assert!(!c.panes[Pane::Qa as usize].due.contains(&(done.clone(), 1)));
+    }
+
+    #[test]
+    fn qr_speed_is_a_rate() {
+        assert_eq!(short_num(2.5), "2.5");
+        assert_eq!(short_num(3.0), "3");
+        let mut a = app_with(20);
+        a.open_qr(60).unwrap();
+        let n = match &a.mode {
+            Mode::Qr(q) => q.blocks.len(),
+            _ => unreachable!(),
+        };
+        assert!(n > 1);
+        let s = screen(&mut a);
+        assert!(s.contains("2.5 frames/s"), "{s}");
+        a.on_key(key('+'));
+        assert!(screen(&mut a).contains("3 frames/s"));
+        for _ in 0..20 {
+            a.on_key(key('-'));
+        }
+        assert!(screen(&mut a).contains("0.5 frames/s"));
+        if let Mode::Qr(q) = &a.mode {
+            assert_eq!(q.interval(), Duration::from_secs(2));
+        }
     }
 
     #[test]
