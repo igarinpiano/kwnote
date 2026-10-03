@@ -66,6 +66,8 @@ jobs:
           node tests/qr_crosscheck.mjs "$RUNNER_TEMP/qr.json"
       - name: Sync codes and merge rules agree (JS <-> Rust)
         run: node tests/sync_interop.mjs
+      - name: Spreadsheet script (tools/sheets/kwnote.gs) round-trips and merges
+        run: node tests/sheets_gs.mjs
 
   licenses:
     name: Third-party licenses (cargo-about)

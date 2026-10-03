@@ -18,6 +18,7 @@
 | `cli/about.toml` / `cli/about.hbs` / `Cross.toml` | サードパーティのライセンス表記（cargo-about の設定とテンプレート）。生成物 `THIRD-PARTY-LICENSES.txt` はコミットしない（.gitignore）。`build.rs` が `KWNOTE_LICENSES`（ワークスペースルートからの相対パス）を埋め込み、`kwnote licenses` で表示。`Cross.toml` はその変数を cross のコンテナに渡す |
 | `LICENSE` | Apache-2.0（Copyright 2026 Legrs & Igarin）。`cli/Cargo.toml` の `license` と README の「商標・ライセンス」も合わせる |
 | `cli/examples/qr_fixtures.rs` | `qr.js` 検証用の参照 QR 行列（Rust `qrcode` crate） |
+| `tools/sheets/kwnote.gs` | Google スプレッドシートで一括編集するための Apps Script（1 ファイル。JSON ⇄ 表）。前半の `kw…` 関数は純粋なロジックで、`tests/sheets_gs.mjs` が偽のシート API の上で Import→編集→Export を通し、`sync.js` のマージで反映されることまで確認する。**変えた行だけ `updatedAt` を厳密に新しくする・消えた行はトゥームストーン・知らないフィールドは控え（隠しシート `_kwnote_base`）から戻す**。データモデルや settings の項目を変えたらここも合わせる |
 | `tests/*.mjs` | Node 製の相互運用テスト（下記） |
 | `.github/workflows/` | CI（`ci.yml`）とリリース（`release.yml`） |
 | `install.sh` / `install.ps1` | `curl … \| sh` / `irm … \| iex` 用インストーラ（OS・CPU 判定 → 最新リリース取得 → SHA256 検証） |
@@ -86,6 +87,7 @@ cd cli && cargo test             # model/codec/TUI（TestBackend で実キー操
 cd cli && cargo clippy && cargo fmt
 cd cli && cargo run -q --example qr_fixtures > /tmp/qr.json && node ../tests/qr_crosscheck.mjs /tmp/qr.json
 node tests/sync_interop.mjs      # 要 target/debug/kwnote（ルートで cargo build）。JS⇔Rust の同期コード往復とマージ一致（乱数200件）
+node tests/sheets_gs.mjs         # tools/sheets/kwnote.gs（スプレッドシート連携）を触ったら
 for f in script.js sync.js qr.js sw.js; do node --check $f; done
 node tests/web_version.mjs --fix # Web ファイル（style.css/qr.js/sync.js/script.js）を変えたら必ず実行
 ```
