@@ -196,7 +196,10 @@ function kwApplyTable(baseRecs, rows, kind, ctx) {
   baseRecs.forEach(function (r) {
     if (seen[r.id]) return;
     if (r.deleted) { out.push(r); return; }
+    // 中身は残さない（アプリの削除と同じ形: sync.js tombstone）
     var t = kwClone(r);
+    (kind === 'qa' ? ['question', 'answer', 'note'] : ['text']).forEach(function (k) { t[k] = ''; });
+    t.completedTurns = [];
     t.deleted = true;
     t.updatedAt = Math.max(ctx.now, (+r.updatedAt || 0) + 1);
     out.push(t);

@@ -22,24 +22,53 @@
     if(local.deleted || other.deleted) r.deleted = true;
     return r;
   }
-  function mergeRecords(local, other){
+  // A deleted record keeps no content: only what merging needs (id, updatedAt,
+  // deleted). keys = the text fields of that kind of record.
+  var ITEM_TEXT = ["question", "answer", "note"], SENTENCE_TEXT = ["text"];
+  function tombstone(r, keys){
+    var t = JSON.parse(JSON.stringify(r));
+    keys.forEach(function(k){ t[k] = ""; });
+    t.completedTurns = [];
+    t.deleted = true;
+    return t;
+  }
+  function mergeRecords(local, other, keys){
     var out = [], index = {};
     (local || []).concat(other || []).forEach(function(r){
       if(!r || !r.id) return;
       if(index.hasOwnProperty(r.id)) out[index[r.id]] = pick(out[index[r.id]], r);
       else { index[r.id] = out.length; out.push(r); }
     });
-    return out;
+    return out.map(function(r){ return r.deleted ? tombstone(r, keys) : r; });
   }
   function mergeDocs(local, other){
     local = local || {}; other = other || {};
     var ls = local.settings || {n:[1,3,7,14]}, os = other.settings;
     return {
       version: 2,
-      items: mergeRecords(local.items, other.items),
-      sentences: mergeRecords(local.sentences, other.sentences),
+      items: mergeRecords(local.items, other.items, ITEM_TEXT),
+      sentences: mergeRecords(local.sentences, other.sentences, SENTENCE_TEXT),
       settings: (os && (+os.updatedAt || 0) > (+ls.updatedAt || 0)) ? os : ls
     };
+  }
+
+  // The "deleted" markers still kept for sync, and a copy of the document
+  // without them. Dropping them is only safe once every device has synced:
+  // one that still holds the live record would bring it back.
+  function countDeleted(doc){
+    var n = 0;
+    [doc.items, doc.sentences].forEach(function(list){
+      (list || []).forEach(function(r){ if(r && r.deleted) n++; });
+    });
+    return n;
+  }
+  function purgeDoc(doc){
+    var keep = function(r){ return r && !r.deleted; };
+    var out = {};
+    for(var k in doc) if(doc.hasOwnProperty(k)) out[k] = doc[k];
+    out.items = (doc.items || []).filter(keep);
+    out.sentences = (doc.sentences || []).filter(keep);
+    return out;
   }
 
   // ================================================================ sync code
@@ -191,6 +220,23 @@
       cache: "no-store"
     }), 15000).then(function(r){
       if(r.status === 401) throw new Error("キーが違います (key rejected)");
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    });
+  }
+
+  // Sync, then drop every deleted marker on both sides; the answer replaces
+  // our data. An older `kwnote serve` doesn't know this (405).
+  function purgeWithServer(doc, cfg){
+    cfg = cfg || getServer();
+    return withTimeout(fetch(normalizeUrl(cfg.url) + "/api/purge", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Kwnote-Key": cfg.key || ""},
+      body: JSON.stringify(doc),
+      cache: "no-store"
+    }), 15000).then(function(r){
+      if(r.status === 401) throw new Error("キーが違います (key rejected)");
+      if(r.status === 404 || r.status === 405){ var e = new Error("old server"); e.oldServer = true; throw e; }
       if(!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     });
@@ -396,6 +442,12 @@
     PREFIX: PREFIX,
     DEFAULT_CHUNK: DEFAULT_CHUNK,
     mergeDocs: mergeDocs,
+    ITEM_TEXT: ITEM_TEXT,
+    SENTENCE_TEXT: SENTENCE_TEXT,
+    tombstone: tombstone,
+    countDeleted: countDeleted,
+    purgeDoc: purgeDoc,
+    purgeWithServer: purgeWithServer,
     encodePayload: encodePayload,
     decodePayload: decodePayload,
     encodeFrames: encodeFrames,

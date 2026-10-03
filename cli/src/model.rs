@@ -6,7 +6,9 @@
 //! * the copy with the larger `updatedAt` wins
 //! * on a tie with differing content, `completedTurns` are unioned and
 //!   `deleted` is OR-ed (this covers legacy data that has no `updatedAt`)
-//! * deletions are tombstones (`deleted: true`) so they propagate
+//! * deletions are tombstones (`deleted: true`) so they propagate; a
+//!   tombstone carries no content (text and turns are emptied), and
+//!   `purge_doc` drops tombstones for good once every device has seen them
 
 use std::collections::{HashMap, HashSet};
 
@@ -293,12 +295,15 @@ pub trait Record: Clone + PartialEq {
     fn completed_turns(&self) -> &[u8];
     fn completed_turns_mut(&mut self) -> &mut Vec<u8>;
     fn touch(&mut self);
+    /// Empty the text fields and the finished turns: what a tombstone keeps
+    /// is only what merging needs (id, updatedAt, deleted).
+    fn clear_content(&mut self);
     /// Concatenated user-visible text, used by search.
     fn haystack(&self) -> String;
 }
 
 macro_rules! impl_record {
-    ($t:ty, |$s:ident| $hay:expr) => {
+    ($t:ty, |$s:ident| $hay:expr, [$($text:ident),+]) => {
         impl Record for $t {
             fn id(&self) -> &str {
                 &self.id
@@ -324,6 +329,10 @@ macro_rules! impl_record {
             fn touch(&mut self) {
                 self.updated_at = next_stamp(self.updated_at);
             }
+            fn clear_content(&mut self) {
+                $(self.$text.clear();)+
+                self.completed_turns.clear();
+            }
             fn haystack(&self) -> String {
                 let $s = self;
                 $hay
@@ -332,11 +341,12 @@ macro_rules! impl_record {
     };
 }
 
-impl_record!(Item, |s| format!(
-    "{}\n{}\n{}",
-    s.question, s.answer, s.note
-));
-impl_record!(Sentence, |s| s.text.clone());
+impl_record!(
+    Item,
+    |s| format!("{}\n{}\n{}", s.question, s.answer, s.note),
+    [question, answer, note]
+);
+impl_record!(Sentence, |s| s.text.clone(), [text]);
 
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -517,7 +527,33 @@ pub fn merge_records<R: Record>(local: &[R], other: &[R]) -> Vec<R> {
             }
         }
     }
+    // a deleted record keeps no content (same in `mergeRecords`, sync.js)
+    for r in out.iter_mut().filter(|r| r.deleted()) {
+        r.clear_content();
+    }
     out
+}
+
+/// Mark a record deleted: a tombstone with a fresh stamp and no content.
+pub fn delete_record<R: Record>(r: &mut R) {
+    r.set_deleted(true);
+    r.clear_content();
+    r.touch();
+}
+
+/// Number of tombstones (deleted records) still kept for sync.
+pub fn tombstones(doc: &Doc) -> usize {
+    doc.items.iter().filter(|r| r.deleted).count()
+        + doc.sentences.iter().filter(|r| r.deleted).count()
+}
+
+/// Drop every tombstone. Only safe once all devices have synced: a device
+/// that still holds the live record would bring it back.
+pub fn purge_doc(doc: &Doc) -> Doc {
+    let mut d = doc.clone();
+    d.items.retain(|r| !r.deleted);
+    d.sentences.retain(|r| !r.deleted);
+    d
 }
 
 pub fn merge_docs(local: &Doc, other: &Doc) -> Doc {
@@ -638,6 +674,38 @@ mod tests {
             ..Default::default()
         };
         assert!(merge_docs(&a, &b).items[0].deleted);
+    }
+
+    #[test]
+    fn tombstones_keep_no_content_and_can_be_purged() {
+        let mut it = item("x", 5, &[1, 2]);
+        it.note = "n".into();
+        let mut dead = it.clone();
+        dead.deleted = true; // an old tombstone that still carries its text
+        let a = Doc {
+            items: vec![dead, item("y", 1, &[1])],
+            ..Default::default()
+        };
+        let m = merge_docs(&a, &Doc::default());
+        let x = &m.items[0];
+        assert!(x.deleted && x.question.is_empty() && x.answer.is_empty() && x.note.is_empty());
+        assert!(x.completed_turns.is_empty() && x.updated_at == 5);
+        assert_eq!(m.items[1].question, "q-y");
+
+        delete_record(&mut it);
+        assert!(it.deleted && it.question.is_empty() && it.updated_at > 5);
+
+        assert_eq!(tombstones(&m), 1);
+        let p = purge_doc(&m);
+        assert_eq!(p.items.len(), 1);
+        assert_eq!(p.items[0].id, "y");
+        assert_eq!(tombstones(&p), 0);
+        // … but a device that never saw the deletion brings the record back
+        let stale = Doc {
+            items: vec![item("x", 5, &[1, 2])],
+            ..Default::default()
+        };
+        assert!(!merge_docs(&p, &stale).items.iter().any(|r| r.deleted));
     }
 
     #[test]

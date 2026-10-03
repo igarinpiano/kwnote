@@ -121,6 +121,12 @@ enum Cmd {
         #[arg(long)]
         key: Option<String>,
     },
+    /// Drop the "deleted" markers kept for sync (once every device has synced)
+    Purge {
+        /// Don't ask for confirmation
+        #[arg(short, long)]
+        yes: bool,
+    },
     /// Print the data file path
     Path,
     /// Print the licenses of the third-party crates built into kwnote
@@ -219,6 +225,10 @@ fn run() -> Result<()> {
             println!("sentences      : {} (due {})", s.sentences, s.due_sentences);
             println!("due tomorrow   : {}", s.due_tomorrow);
             println!("all turns done : {}", s.finished);
+            println!(
+                "deleted markers: {} (kept for sync; `kwnote purge` drops them)",
+                model::tombstones(&doc)
+            );
             println!("settings       : {}", doc.settings.describe());
             Ok(())
         }
@@ -346,6 +356,35 @@ fn run() -> Result<()> {
             use std::io::Write;
             let text = include_str!(concat!(env!("OUT_DIR"), "/licenses.txt"));
             let _ = std::io::stdout().write_all(text.as_bytes());
+            Ok(())
+        }
+        Cmd::Purge { yes } => {
+            let doc = store::load()?;
+            let n = model::tombstones(&doc);
+            if n == 0 {
+                println!("nothing to purge — no deleted markers");
+                return Ok(());
+            }
+            if !yes {
+                if !std::io::stdin().is_terminal() {
+                    bail!("{n} deleted marker(s); pass --yes to drop them");
+                }
+                println!(
+                    "{n} deleted marker(s) are kept so that other devices learn about the deletions.\n\
+                     Dropping them is safe once every device has synced; a device that has not\n\
+                     would bring the deleted records back the next time it syncs."
+                );
+                eprint!("Drop them? [y/N] ");
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                if !matches!(line.trim(), "y" | "Y" | "yes") {
+                    println!("kept");
+                    return Ok(());
+                }
+            }
+            // not `commit`: that would merge the markers on disk right back in
+            store::replace(&model::purge_doc(&doc))?;
+            println!("purged {n} deleted marker(s)");
             Ok(())
         }
         Cmd::Path => {

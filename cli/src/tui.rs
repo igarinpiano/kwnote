@@ -324,6 +324,10 @@ const HELP: &[(&str, &str)] = &[
         ":all  :today  :stats  :e!",
         "view all / today · statistics · reload from disk",
     ),
+    (
+        ":purge  :purge!",
+        "count / drop the deleted markers kept for sync",
+    ),
     ("?", "this help · q / Esc closes"),
 ];
 
@@ -701,20 +705,37 @@ impl App {
             Pane::Qa => {
                 if let Some(r) = find_mut(&mut self.doc.items, id) {
                     self.undo.push(Snapshot::Item(r.clone()));
-                    r.deleted = true;
-                    r.touch();
+                    model::delete_record(r);
                 }
             }
             Pane::Sentences => {
                 if let Some(r) = find_mut(&mut self.doc.sentences, id) {
                     self.undo.push(Snapshot::Sentence(r.clone()));
-                    r.deleted = true;
-                    r.touch();
+                    model::delete_record(r);
                 }
             }
         }
         self.save();
         self.info("deleted (u to undo)");
+    }
+
+    /// Drop every tombstone, here and in the data file.
+    fn purge(&mut self) {
+        // take in what is on disk first, then write without merging back
+        // (`save` would merge the file's tombstones in again)
+        let disk = store::load().unwrap_or_default();
+        let merged = merge_docs(&self.doc, &disk);
+        let n = model::tombstones(&merged);
+        let doc = model::purge_doc(&merged);
+        match store::replace(&doc) {
+            Ok(()) => {
+                self.doc = doc;
+                self.mtime = store::mtime();
+                self.reconcile();
+                self.info(format!("purged {n} deleted marker(s)"));
+            }
+            Err(e) => self.error(format!("purge failed: {e:#}")),
+        }
     }
 
     fn open_form(&mut self, pane: Pane, edit: Option<String>) {
@@ -966,6 +987,13 @@ impl App {
                     s.items, s.due_items, s.sentences, s.due_sentences, s.finished, s.due_tomorrow
                 ));
             }
+            "purge" => {
+                let n = model::tombstones(&self.doc);
+                self.info(format!(
+                    "{n} deleted marker(s) kept for sync — :purge! drops them (only once every device has synced)"
+                ));
+            }
+            "purge!" => self.purge(),
             "h" | "help" => self.mode = Mode::Help(0),
             _ => self.error(format!("E492: Not an editor command: {cmd}")),
         }
@@ -2035,6 +2063,42 @@ mod tests {
         let mut c = App::new(a.doc.clone(), a.today + chrono::Duration::days(1));
         c.apply_saved(saved);
         assert!(!c.panes[Pane::Qa as usize].due.contains(&(done.clone(), 1)));
+    }
+
+    #[test]
+    fn delete_leaves_an_empty_marker_and_purge_drops_it() {
+        let _disk = temp_data();
+        let cmd = |a: &mut App, s: &str| {
+            press(a, KeyCode::Char(':'));
+            for c in s.chars() {
+                a.on_key(key(c));
+            }
+            press(a, KeyCode::Enter);
+        };
+        let mut a = app_with(3);
+        a.delete(Pane::Qa, "id_0");
+        let dead = a.doc.items.iter().find(|r| r.id == "id_0").unwrap();
+        assert!(dead.deleted && dead.question.is_empty() && dead.answer.is_empty());
+        let disk = store::load().unwrap();
+        assert_eq!(model::tombstones(&disk), 1);
+        assert_eq!(a.rows(Pane::Qa).len(), 2);
+
+        cmd(&mut a, "purge");
+        assert!(a.msg.contains("1 deleted marker"), "{}", a.msg);
+        assert_eq!(a.doc.items.len(), 3); // only reports
+        cmd(&mut a, "purge!");
+        assert_eq!(a.doc.items.len(), 2);
+        let disk = store::load().unwrap();
+        assert_eq!((disk.items.len(), model::tombstones(&disk)), (2, 0));
+        // a later save does not bring the marker back
+        a.focus = Pane::Qa;
+        a.on_key(key('c'));
+        assert_eq!(store::load().unwrap().items.len(), 2);
+        // undo still restores the record itself
+        a.on_key(key('u'));
+        a.on_key(key('u'));
+        assert_eq!(a.rows(Pane::Qa).len(), 3);
+        assert!(a.doc.items.iter().any(|r| r.question == "question 0"));
     }
 
     #[test]

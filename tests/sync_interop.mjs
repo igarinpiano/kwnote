@@ -87,6 +87,31 @@ for (let t = 0; t < 200; t++) {
   kw(f, "import", path.join(tmp, "b.json"));
   check("merge #" + t, JSON.parse(fs.readFileSync(f, "utf8")), S.mergeDocs(A, B));
 }
+
+// 4. tombstones keep no content on either side, and purge drops the same ones
+{
+  const A = { version: 2, sentences: [{ id: "s1", text: "bye", registeredDate: "2026-09-01", completedTurns: [1], updatedAt: 7, deleted: true }],
+    items: [
+      { id: "dead", question: "secret", answer: "text", note: "n", registeredDate: "2026-09-01", completedTurns: [1, 2], updatedAt: 5, deleted: true },
+      { id: "live", question: "q", answer: "a", note: "", registeredDate: "2026-09-01", completedTurns: [], updatedAt: 5 },
+    ], settings: { n: [1, 3, 7, 14], updatedAt: 1 } };
+  const f = path.join(tmp, "t.json"), empty = path.join(tmp, "e.json");
+  fs.writeFileSync(f, JSON.stringify(A));
+  fs.writeFileSync(empty, JSON.stringify({ version: 2, items: [], sentences: [] }));
+  kw(f, "import", empty);
+  const rust = JSON.parse(fs.readFileSync(f, "utf8")), js = S.mergeDocs(A, { items: [], sentences: [] });
+  check("tombstone content", rust, js);
+  for (const d of [rust, js]) {
+    const t = d.items.find((r) => r.id === "dead");
+    if (t.question || t.answer || t.note || t.completedTurns.length || !t.deleted || t.updatedAt !== 5 || d.sentences[0].text) {
+      fails++; console.log("FAIL tombstone still has content", JSON.stringify(d));
+    }
+  }
+  kw(f, "purge", "--yes");
+  const purged = JSON.parse(fs.readFileSync(f, "utf8"));
+  check("purge", purged, S.purgeDoc(js));
+  if (purged.items.length !== 1 || purged.sentences.length !== 0 || S.countDeleted(js) !== 2) { fails++; console.log("FAIL purge", JSON.stringify(purged)); }
+}
 console.log(fails ? `${fails} failures` : "all interop checks passed");
 fs.rmSync(tmp, { recursive: true, force: true });
 process.exit(fails ? 1 : 0);

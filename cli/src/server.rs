@@ -16,7 +16,7 @@ use anyhow::{Result, anyhow};
 use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::codec::QrBlock;
-use crate::model::Doc;
+use crate::model::{Doc, merge_docs, purge_doc, tombstones};
 use crate::store;
 
 const MAX_BODY: u64 = 32 * 1024 * 1024;
@@ -168,6 +168,25 @@ fn handle(mut req: Request, key: Option<&str>) -> Result<()> {
                         merged.sentences.iter().filter(|i| !i.deleted).count()
                     );
                     json(200, serde_json::to_string(&merged)?)
+                }
+                Err(e) => error(400, &format!("invalid document: {e}")),
+            }
+        }
+        // Sync, then drop every tombstone on both sides: the client replaces
+        // its data with the answer (the web app's CLEAN UP button).
+        (Method::Post, "/api/purge") => {
+            let mut body = String::new();
+            req.as_reader().take(MAX_BODY).read_to_string(&mut body)?;
+            match serde_json::from_str::<Doc>(&body) {
+                Ok(client) => {
+                    let merged = merge_docs(&client, &store::load()?);
+                    let purged = purge_doc(&merged);
+                    store::replace(&purged)?;
+                    eprintln!(
+                        "  purged {} deleted marker(s)",
+                        tombstones(&merged) - tombstones(&purged)
+                    );
+                    json(200, serde_json::to_string(&purged)?)
                 }
                 Err(e) => error(400, &format!("invalid document: {e}")),
             }

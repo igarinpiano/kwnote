@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
-<link rel="stylesheet" href="style.css?v=db014cfde4">
+<link rel="stylesheet" href="style.css?v=327d03d096">
 
 </head>
 <body>
@@ -146,6 +146,10 @@
       <button id="share-btn" style="display:none;">SHARE</button>
       <input type="file" id="file-input" accept=".json,.txt,application/json,text/plain" style="display:none;">
     </div>
+    <div class="sync-row" id="purge-row" style="display:none;">
+      <span class="purge-note" id="purge-note"></span>
+      <button id="purge-btn" title="削除済みの印を完全に消す / Drop the deleted markers">CLEAN UP</button>
+    </div>
     <details class="sync-help">
       <summary>同期のしかた / How to sync</summary>
       <ul>
@@ -153,6 +157,7 @@
         <li><b>LAN</b>: PCで <code>kwnote serve</code> を実行し、表示されたQRをスマホのカメラで読むと、このアプリがそのPCから開き自動で同期されます。PCのブラウザは <code>http://localhost:7878</code> を開くだけ。</li>
         <li><b>テキスト / ファイル</b>: COPY CODE / SAVE FILE で書き出し、相手側の PASTE CODE / OPEN FILE で読み込み。メッセージアプリやAirDropでも送れます。</li>
         <li>読み込みはすべて<b>マージ</b>です（新しく更新された方が勝ち、削除も伝わります）。</li>
+        <li>削除した項目は、中身を空にした<b>「削除済みの印」</b>として残り、同期で相手にも削除を伝えます。全部の端末に伝わったら <b>CLEAN UP</b> で完全に消せます（保存するファイルや QR も小さくなります）。</li>
       </ul>
     </details>
     <p class="tm-note">QRコードは株式会社デンソーウェーブの登録商標です。 / QR Code is a registered trademark of DENSO WAVE INCORPORATED.</p>
@@ -175,9 +180,9 @@
   <span class="sb-msg" id="sb-msg"></span>
 </div>
 
-<script src="qr.js?v=db014cfde4"></script>
-<script src="sync.js?v=db014cfde4"></script>
-<script src="script.js?v=db014cfde4">
+<script src="qr.js?v=327d03d096"></script>
+<script src="sync.js?v=327d03d096"></script>
+<script src="script.js?v=327d03d096">
 </script>
 </body>
 </html>

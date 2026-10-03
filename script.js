@@ -25,8 +25,9 @@ function safeSet(key, val){
   try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){ console.error("storage error", e); }
 }
 
-// Records are never removed: deletion leaves a tombstone ({deleted:true}) so
-// that it can propagate through sync. Every change stamps updatedAt.
+// Deletion leaves a tombstone ({deleted:true}, content emptied) so that it can
+// propagate through sync; CLEAN UP (purgeDeleted) drops the tombstones once
+// every device has synced. Every change stamps updatedAt.
 function loadItems(){ return safeGet(K_ITEMS, []); }
 function saveItems(v){ safeSet(K_ITEMS, v); scheduleAutoSync(); }
 // 保存されている値は変えずに、使うときだけ整える（壊れた値・空の n は既定値）
@@ -465,10 +466,16 @@ function deleteRecord(p, id){
   if(!rec) return;
   var label = p === "qa" ? rec.question : rec.text;
   if(!confirm("削除しますか？ / Delete?\n\n" + label)) return;
-  updateRecord(p, id, function(r){ r.deleted = true; });
+  // 中身は残さない（「削除した」という印だけを同期用に残す）
+  updateRecord(p, id, function(r){
+    (p === "qa" ? KWSync.ITEM_TEXT : KWSync.SENTENCE_TEXT).forEach(function(k){ r[k] = ""; });
+    r.completedTurns = [];
+    r.deleted = true;
+  });
   reconcileDueLists();
   message("削除しました");
   render();
+  updatePurgeRow();
 }
 
 function moveSelection(delta){
@@ -721,6 +728,7 @@ function mergeIncoming(doc){
   loadSettingsToForm();
   reconcileDueLists();
   render();
+  updatePurgeRow();
   return merged;
 }
 
@@ -774,6 +782,49 @@ document.getElementById("sync-btn").addEventListener("click", function(){
   KWSync.setServer({url:url, key:key, auto:true, lastSync: cur.url === url ? cur.lastSync : null});
   syncNow(false);
 });
+// ---- 削除済みの印の片づけ ----
+// 削除した項目は「削除した」という印（中身は空）として残り、同期で相手に伝わる。
+// 全部の端末に伝わったあとは不要なので、CLEAN UP で完全に消せる。
+function updatePurgeRow(){
+  var n = KWSync.countDeleted(getDoc());
+  document.getElementById("purge-row").style.display = n ? "" : "none";
+  document.getElementById("purge-note").textContent = "削除済みの印: " + n + " 件（ほかの端末に削除を伝えるために残しています）";
+}
+function applyPurged(doc, n){
+  setDoc(doc);
+  reconcileDueLists();
+  render();
+  updatePurgeRow();
+  message("削除済みの印 " + n + " 件を消しました");
+}
+function purgeDeleted(){
+  var doc = getDoc(), n = KWSync.countDeleted(doc);
+  if(!n) return;
+  var cfg = KWSync.getServer(), lan = cfg && cfg.url && cfg.auto !== false;
+  if(!confirm("削除済みの印 " + n + " 件を完全に消します。\n\n" +
+    "この印は、ほかの端末に「削除した」と伝えるためのものです。まだ同期していない端末があると、" +
+    "その端末と次に同期したときに、消した項目が復活します。\n" +
+    "ほかの端末でも同じデータを使っている場合は、先に全部の端末を同期してから、それぞれの端末で CLEAN UP してください。\n\n" +
+    (lan ? "同期先（" + cfg.url + "）の印も一緒に消します。\n\n" : "") + "消しますか？")) return;
+  if(!lan){ applyPurged(KWSync.purgeDoc(doc), n); return; }
+  // LAN 同期中: サーバーに印が残っていると次の同期で戻ってくるので、サーバーと一緒に消す
+  if(syncing){ message("同期中です。少し待ってからもう一度押してください", true); return; }
+  syncing = true;
+  setSyncStatus("LAN: cleaning up… " + cfg.url, "busy");
+  KWSync.purgeWithServer(doc, cfg).then(function(remote){
+    // 待っている間の編集は残す（どちらも印を落としてからマージ）
+    var merged = KWSync.purgeDoc(KWSync.mergeDocs(KWSync.purgeDoc(getDoc()), remote));
+    applyPurged(merged, n);
+    describeServer();
+  }, function(err){
+    describeServer();
+    message(err.oldServer
+      ? "同期先の kwnote が古いため消せません。同期先で kwnote update をしてから、もう一度押してください"
+      : "同期先につながらないため消せませんでした（" + err.message + "）", true);
+  }).then(function(){ syncing = false; });
+}
+document.getElementById("purge-btn").addEventListener("click", purgeDeleted);
+
 document.getElementById("sync-forget-btn").addEventListener("click", function(){
   KWSync.setServer(null);
   document.getElementById("sync-url").value = "";
@@ -967,6 +1018,7 @@ document.addEventListener("keydown", function(e){
 // ---- 起動 ----
 refreshDueList(true);
 render();
+updatePurgeRow();
 describeServer();
 function pairWithServer(){
   return KWSync.detectServer().then(function(cfg){
@@ -985,7 +1037,7 @@ document.addEventListener("visibilitychange", function(){
 });
 // keep other tabs of this app in step
 window.addEventListener("storage", function(e){
-  if(e.key === K_ITEMS || e.key === K_SENTENCES || e.key === K_SETTINGS){ loadSettingsToForm(); reconcileDueLists(); render(); }
+  if(e.key === K_ITEMS || e.key === K_SENTENCES || e.key === K_SETTINGS){ loadSettingsToForm(); reconcileDueLists(); render(); updatePurgeRow(); }
 });
 if("serviceWorker" in navigator && window.isSecureContext && location.protocol !== "file:"){
   // a new version took over (after a deploy): reload once so the page and

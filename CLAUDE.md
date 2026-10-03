@@ -40,6 +40,8 @@ Web 側は**ビルド工程なし・クラシック `<script>`**（ES modules �
   - 設定 UI はほかの項目を消さない（Web の `applySettings` は既存の settings に上書き）。
 - **今日のリスト**（`buildToday`(script.js) ⇔ `build_today`(model.rs)）: 引き継ぐ行（carry）を先頭に、残りの今日の分を `order` で並べて `limit` まで足す。終えた行もその日のうちはリストに残り上限に数える。端末ごとに保存（Web: localStorage `kw_today`、TUI: `<home>/today.json`）し、同じ日・同じ設定なら起動時にそのまま復元、設定が変わったら「終えた行」だけ残して作り直す。同期では共有しない。
 - **削除はトゥームストーン**（`deleted: true`）。レコードを配列から消すと同期で復活するので消さない。
+  - トゥームストーンは**中身を持たない**（テキスト欄は `""`、`completedTurns` は `[]`。id・updatedAt・deleted だけが意味を持つ）。削除時（Web `deleteRecord` / Rust `delete_record` / `kwnote.gs`）とマージ時（`mergeRecords` ⇔ `merge_records`）の両方で空にする。`updatedAt` は変えない（同値タイは `deleted` の OR なので害がない）。
+  - 溜まった印を消すのは**利用者の明示的な操作だけ**（purge）: Web の CLEAN UP（`purgeDeleted`）、`kwnote purge`、TUI `:purge!`。自動では消さない（まだ同期していない端末があると項目が復活するため。日数での自動失効も入れていない）。purge は保存に `store::replace` を使う（`commit` はディスク上の印をマージで戻してしまう）。LAN 同期中の Web は `POST /api/purge` でサーバーと一緒に消し、返ってきた doc で**置き換える**。
 - **変更時は必ず `updatedAt` を更新し、しかも直前の値より厳密に大きくする**（JS `nextStamp` / Rust `next_stamp`・`Record::touch`）。同一ミリ秒で同値になると下のタイ規則で `deleted` が OR され、「削除→元に戻す」が失われる（実際に起きたバグ）。
 - 未知フィールドは保持する（Rust は `#[serde(flatten)] extra`）。旧データ（`updatedAt` なし・`note: null` 等）も読めること。
 
@@ -59,7 +61,7 @@ Web 側は**ビルド工程なし・クラシック `<script>`**（ES modules �
   `frame = "KW1:<sid>:<i>:<n>:<chunk>"`（i は 1 始まり、sid は payload の FNV-1a 下位 24bit）。
   1 フレーム = 1 QR。複数フレームはアニメーション表示し、受信側は順不同で集める。改行で連結したものがテキスト版コード。
 - **LAN**: `kwnote serve`（既定 `0.0.0.0:7878`）が Web アプリ一式を `include_str!` で埋め込んで配信し、API を提供:
-  `GET /api/info`（認証なし）, `GET /api/data`, `POST /api/sync`（クライアント doc を受けてマージ・保存し、マージ結果を返す）。
+  `GET /api/info`（認証なし）, `GET /api/data`, `POST /api/sync`（クライアント doc を受けてマージ・保存し、マージ結果を返す）, `POST /api/purge`（同じくマージしたうえでトゥームストーンを全部落として保存・返却。v1.1.1 以前のサーバーには無く 405 になるので、Web は「同期先が古い」と案内して何も消さない）。
   認証はペアリングキー（`X-Kwnote-Key` ヘッダ or `?key=`）。表示 URL の `#key=...` を Web アプリが拾って `kw_sync` に保存し URL から消す。CORS と `Access-Control-Allow-Private-Network` 付き。
   Web は変更 1.2 秒後・起動時・タブ復帰時に自動同期。応答待ちの間の編集は「応答をローカルにマージ」で守り、再同期する。
 - **CLI 同士**: `kwnote sync http://<host>:7878 --key <key>`（URL とキーは config に記憶）。
