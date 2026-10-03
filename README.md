@@ -297,6 +297,7 @@ vim と同じ感覚で操作できます（ターミナル版のみ。Web 版は
 
 ## 商標・ライセンス
 
+- kwnote は [Apache License 2.0](LICENSE) で公開しています（Copyright 2026 Legrs & Igarin）。
 - QRコードは株式会社デンソーウェーブの登録商標です。 / QR Code is a registered trademark of DENSO WAVE INCORPORATED.
 - QR コードの生成は自前の実装（`qr.js`）と Rust の [`qrcode`](https://crates.io/crates/qrcode) クレート（MIT / Apache-2.0）です。読み取りはブラウザの `BarcodeDetector` を使い、無い環境（iPhone Safari など）だけ [jsQR](https://github.com/cozmo/jsQR)（Apache-2.0）を CDN から読み込みます。
 - CLI が使っているそのほかのクレートのライセンスは、各クレートに従います（`cli/Cargo.toml` 参照）。
