@@ -1,0 +1,25 @@
+kwnote — third-party licenses
+=============================
+
+kwnote is licensed under the Apache License 2.0 (see LICENSE in the
+repository). The kwnote executable also contains the Rust crates listed
+below; their license texts follow.
+
+QR Code is a registered trademark of DENSO WAVE INCORPORATED.
+
+Overview
+--------
+{{#each overview}}
+{{{name}}} — {{count}} crate(s)
+{{/each}}
+{{#each licenses}}
+
+--------------------------------------------------------------------------
+{{{name}}} ({{{id}}})
+Used by:
+{{#each used_by}}
+  - {{{crate.name}}} {{{crate.version}}}
+{{/each}}
+
+{{{text}}}
+{{/each}}

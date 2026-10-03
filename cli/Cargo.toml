@@ -5,6 +5,7 @@ description = "kwnote — spaced-repetition memory notes (CLI / TUI / LAN sync s
 edition = "2024"
 repository = "https://github.com/igarinpiano/kwnote"
 license = "Apache-2.0"
+publish = false
 
 [dependencies]
 anyhow = "1.0.104"

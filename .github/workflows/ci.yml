@@ -67,6 +67,21 @@ jobs:
       - name: Sync codes and merge rules agree (JS <-> Rust)
         run: node tests/sync_interop.mjs
 
+  licenses:
+    name: Third-party licenses (cargo-about)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # keep the version in step with release.yml
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.2
+      - name: Every dependency has an accepted license (cli/about.toml)
+        run: |
+          cargo about generate --locked -m cli/Cargo.toml -c cli/about.toml cli/about.hbs -o THIRD-PARTY-LICENSES.txt
+          sed -n '/^Overview/,/^---/p' THIRD-PARTY-LICENSES.txt
+
   installers:
     name: Installer (${{ matrix.os }})
     # installs the *published* latest release, exactly like the README one-liners

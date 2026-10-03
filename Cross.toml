@@ -1,0 +1,5 @@
+# `cross` runs builds in Docker; pass the license-notice file name through
+# (see cli/build.rs). The path is relative to the workspace root, which cross
+# mounts into the container.
+[build.env]
+passthrough = ["KWNOTE_LICENSES"]

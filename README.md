@@ -240,6 +240,10 @@ GitHub の最新リリースを取得し、`SHA256SUMS` で検証してから自
 
 使っているデータファイルの場所を表示します。
 
+### `kwnote licenses`
+
+kwnote に組み込まれているサードパーティのクレート（Rust ライブラリ）のライセンス表記を表示します。長いので `kwnote licenses | less` などで読んでください。リリース版のバイナリに入っています（自分でビルドしたものには入りません。下記参照）。
+
 ### 環境変数
 
 | 変数 | 説明 |
@@ -300,4 +304,10 @@ vim と同じ感覚で操作できます（ターミナル版のみ。Web 版は
 - kwnote は [Apache License 2.0](LICENSE) で公開しています（Copyright 2026 Legrs & Igarin）。
 - QRコードは株式会社デンソーウェーブの登録商標です。 / QR Code is a registered trademark of DENSO WAVE INCORPORATED.
 - QR コードの生成は自前の実装（`qr.js`）と Rust の [`qrcode`](https://crates.io/crates/qrcode) クレート（MIT / Apache-2.0）です。読み取りはブラウザの `BarcodeDetector` を使い、無い環境（iPhone Safari など）だけ [jsQR](https://github.com/cozmo/jsQR)（Apache-2.0）を CDN から読み込みます。
-- CLI が使っているそのほかのクレートのライセンスは、各クレートに従います（`cli/Cargo.toml` 参照）。
+- CLI のバイナリに組み込まれているクレートのライセンス表記は、各リリースの `THIRD-PARTY-LICENSES.txt` にまとめてあり、`kwnote licenses` でも表示できます。リリース時に [cargo-about](https://github.com/EmbarkStudios/cargo-about) で自動生成しています（設定は `cli/about.toml`）。手元で作るには:
+
+  ```bash
+  cargo install cargo-about --locked --features cli
+  cargo about generate --locked -m cli/Cargo.toml -c cli/about.toml cli/about.hbs -o THIRD-PARTY-LICENSES.txt
+  KWNOTE_LICENSES=THIRD-PARTY-LICENSES.txt cargo build --release   # バイナリに埋め込む場合
+  ```

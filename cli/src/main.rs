@@ -123,6 +123,8 @@ enum Cmd {
     },
     /// Print the data file path
     Path,
+    /// Print the licenses of the third-party crates built into kwnote
+    Licenses,
     /// Update kwnote to the latest GitHub release (checksum-verified)
     Update {
         /// Only check whether a newer release exists
@@ -339,6 +341,13 @@ fn run() -> Result<()> {
             Ok(())
         }
         Cmd::Update { check, force, tag } => update::run(check, force, tag.as_deref()),
+        Cmd::Licenses => {
+            // long text, usually piped into a pager: a closed pipe is fine
+            use std::io::Write;
+            let text = include_str!(concat!(env!("OUT_DIR"), "/licenses.txt"));
+            let _ = std::io::stdout().write_all(text.as_bytes());
+            Ok(())
+        }
         Cmd::Path => {
             println!("{}", store::data_path().display());
             Ok(())

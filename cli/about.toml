@@ -1,0 +1,26 @@
+# cargo-about: the license notices of the Rust crates compiled into kwnote.
+# Generated at release time (.github/workflows/release.yml), attached to the
+# release as THIRD-PARTY-LICENSES.txt and embedded in the binary
+# (`kwnote licenses`); CI checks that every dependency's license is accepted.
+#
+#   cargo about generate --locked -m cli/Cargo.toml -c cli/about.toml cli/about.hbs -o THIRD-PARTY-LICENSES.txt
+#
+# For "A OR B" crates the first accepted license in this list is used.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "Zlib",
+    "ISC",
+    "BSD-3-Clause",
+    "0BSD",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CDLA-Permissive-2.0",
+    "MPL-2.0",
+]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+# kwnote itself (publish = false) is covered by ../LICENSE
+private = { ignore = true }
