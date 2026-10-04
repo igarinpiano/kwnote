@@ -227,6 +227,9 @@ enum Snapshot {
 #[derive(Default)]
 struct PaneState {
     due: Vec<(String, u8)>,
+    /// rows of `due` that were already finished when the list was last
+    /// rebuilt: still in the list (they count toward the cap), not shown
+    hidden: HashSet<String>,
     all: bool,
     sel: usize,
     table: TableState,
@@ -408,8 +411,47 @@ impl App {
                 .collect()
         });
         self.build(carry);
+        self.hide_done();
         self.select_first_open();
         self.revealed.clear();
+    }
+
+    /// Stop showing the rows that are finished by now. Like the web app: a
+    /// row marked OK stays where it is, and is gone after a restart (or any
+    /// other rebuild of the list).
+    fn hide_done(&mut self) {
+        for p in [Pane::Sentences, Pane::Qa] {
+            let hidden = self.panes[p as usize]
+                .due
+                .iter()
+                .filter(|e| self.entry_done(p, e))
+                .map(|e| e.0.clone())
+                .collect();
+            self.panes[p as usize].hidden = hidden;
+        }
+    }
+
+    fn entry_done(&self, pane: Pane, e: &(String, u8)) -> bool {
+        let row = RowRef {
+            id: e.0.clone(),
+            turn: Some(e.1),
+            sched: None,
+        };
+        self.is_done_today(pane, &row)
+    }
+
+    /// (finished, total) of today's list, hidden rows included.
+    fn progress(&self, pane: Pane) -> (usize, usize) {
+        let exists = |id: &str| match pane {
+            Pane::Sentences => find(&self.doc.sentences, id).is_some(),
+            Pane::Qa => find(&self.doc.items, id).is_some(),
+        };
+        let list = self.panes[pane as usize]
+            .due
+            .iter()
+            .filter(|e| exists(&e.0));
+        let total = list.clone().count();
+        (list.filter(|e| self.entry_done(pane, e)).count(), total)
     }
 
     /// Start each pane on its first unfinished row.
@@ -481,6 +523,7 @@ impl App {
         self.panes[Pane::Qa as usize].due = t.qa;
         if t.sig == self.settings_sig() {
             self.reconcile();
+            self.hide_done();
         } else {
             self.refresh();
         }
@@ -517,6 +560,9 @@ impl App {
                 .due
                 .iter()
                 .filter(|(id, _)| exists(id))
+                // finished before the last rebuild: not shown (shown again
+                // if another device un-does the turn)
+                .filter(|e| !(ps.hidden.contains(&e.0) && self.entry_done(pane, e)))
                 .map(|(id, t)| RowRef {
                     id: id.clone(),
                     turn: Some(*t),
@@ -650,16 +696,16 @@ impl App {
         self.save();
         if done {
             self.info(format!("OK — turn {turn} done"));
-            // autofocus the nearest unfinished row (previous first), like the web app
+            // autofocus the nearest unfinished row (the one below first), like the web app
             let rows = self.rows(pane);
             let cur = self.panes[pane as usize].sel;
             for d in 1..rows.len() {
-                if cur >= d && !self.is_done(pane, &rows[cur - d]) {
-                    self.panes[pane as usize].sel = cur - d;
-                    break;
-                }
                 if cur + d < rows.len() && !self.is_done(pane, &rows[cur + d]) {
                     self.panes[pane as usize].sel = cur + d;
+                    break;
+                }
+                if cur >= d && !self.is_done(pane, &rows[cur - d]) {
+                    self.panes[pane as usize].sel = cur - d;
                     break;
                 }
             }
@@ -1434,11 +1480,11 @@ impl App {
         let rows = self.rows(pane);
         let focused = self.focus == pane;
         let all = self.panes[pane as usize].all;
-        let done = rows.iter().filter(|r| self.is_done(pane, r)).count();
         let title = if all {
             format!(" {} — all {} ", pane.label(), rows.len())
         } else {
-            format!(" {} — {}/{} done ", pane.label(), done, rows.len())
+            let (done, total) = self.progress(pane);
+            format!(" {} — {done}/{total} done ", pane.label())
         };
         let border = if focused {
             Style::new().fg(Color::Cyan).bold()
@@ -2036,11 +2082,18 @@ mod tests {
         a.focus = Pane::Qa;
         a.on_key(key('c'));
         let done = a.rows(Pane::Qa)[0].id.clone();
-        // a finished row stays and keeps its place under the cap
+        // marked OK: the row stays where it is …
+        assert_eq!(a.rows(Pane::Qa).len(), 2);
+        // … and once the list is rebuilt it is no longer shown, but it still
+        // holds its place under the cap
         cmd(&mut a, "set order=newest");
         let rows = a.rows(Pane::Qa);
-        assert_eq!(rows.len(), 2);
-        assert!(rows.iter().any(|r| r.id == done));
+        assert_eq!(rows.len(), 1);
+        assert!(rows.iter().all(|r| r.id != done));
+        let due = &a.panes[Pane::Qa as usize].due;
+        assert!(due.len() == 2 && due.iter().any(|e| e.0 == done));
+        assert_eq!(a.progress(Pane::Qa), (1, 2));
+        assert!(screen(&mut a).contains("1/2 done"));
         cmd(&mut a, "set turns=6");
         assert_eq!(a.doc.settings.n, vec![1, 3, 7, 14, 28, 56]);
         cmd(&mut a, "set preset=daily n8=9");
@@ -2059,6 +2112,9 @@ mod tests {
         let mut b = App::new(a.doc.clone(), a.today);
         b.apply_saved(saved.clone());
         assert_eq!(b.panes[Pane::Qa as usize].due, saved.qa);
+        // … with the rows finished before the restart no longer shown
+        assert!(b.rows(Pane::Qa).iter().all(|r| r.id != done));
+        assert_eq!(b.rows(Pane::Qa).len() + 1, saved.qa.len());
         // next day: a fresh list
         let mut c = App::new(a.doc.clone(), a.today + chrono::Duration::days(1));
         c.apply_saved(saved);
@@ -2099,6 +2155,24 @@ mod tests {
         a.on_key(key('u'));
         assert_eq!(a.rows(Pane::Qa).len(), 3);
         assert!(a.doc.items.iter().any(|r| r.question == "question 0"));
+    }
+
+    #[test]
+    fn ok_moves_to_the_nearest_open_row_below_first() {
+        let _disk = temp_data();
+        let mut a = app_with(5);
+        a.focus = Pane::Qa;
+        let sel = |a: &App| a.panes[Pane::Qa as usize].sel;
+        a.panes[Pane::Qa as usize].sel = 2;
+        a.on_key(key('c'));
+        assert_eq!(sel(&a), 3); // rows 1 and 3 are equally near: down
+        a.on_key(key('c'));
+        assert_eq!(sel(&a), 4);
+        a.on_key(key('c'));
+        assert_eq!(sel(&a), 1); // nothing left below: the nearest one above
+        a.on_key(key('c'));
+        assert_eq!(sel(&a), 0);
+        assert_eq!(a.rows(Pane::Qa).len(), 5); // finished rows stay until a restart
     }
 
     #[test]

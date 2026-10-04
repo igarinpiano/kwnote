@@ -127,12 +127,16 @@ function cmp(a, b){ return a < b ? -1 : a > b ? 1 : 0; }
 // 今日のリスト（cli/src/model.rs build_today と同じ考え方）:
 // carry（引き継ぐ行）をそのままの順で先頭に置き、残りの「今日の分」を
 // 設定の並び順で後ろに足す。上限（limit）があればそこまで。
-// 終わった行も今日のうちはリストに残るので、上限に数えられる。
+// 終わった行も今日のうちはリストに残るので、上限に数えられる
+// （hidden の付いた行は表示しないだけで、リストには居る）。
 function buildToday(recs, settings, today, carry){
   var byId = {}, have = {}, out = [], cand = [];
   recs.forEach(function(r){ if(alive(r)) byId[r.id] = r; });
   (carry || []).forEach(function(e){
-    if(byId[e.id] && !have[e.id]){ have[e.id] = true; out.push({id:e.id, turn:e.turn}); }
+    if(byId[e.id] && !have[e.id]){
+      have[e.id] = true;
+      out.push(e.hidden ? {id:e.id, turn:e.turn, hidden:true} : {id:e.id, turn:e.turn});
+    }
   });
   recs.forEach(function(r){
     if(!alive(r) || have[r.id]) return;
@@ -151,6 +155,14 @@ function buildToday(recs, settings, today, carry){
   return out.concat(cand.map(function(c){ return {id:c.id, turn:c.turn}; }));
 }
 
+// 今日の進み具合: 表示していない（再読み込み前に終えた）行も数える
+function todayProgress(p){
+  var byId = {};
+  loadRecords(p).forEach(function(r){ if(alive(r)) byId[r.id] = r; });
+  var list = panes[p].due.filter(function(e){ return byId[e.id]; });
+  return {total:list.length, done:doneEntries(list.map(function(e){ return byId[e.id]; }), list).length};
+}
+
 // list の中で、その turn をもう終えている行だけ
 function doneEntries(recs, list){
   var byId = {};
@@ -166,7 +178,9 @@ function saveToday(){
   safeSet(K_TODAY, {date:listDate, sig:todaySig(loadSettings()), reading:panes.reading.due, qa:panes.qa.due});
 }
 
-// 今日のリストを作り直す（日付・設定の変更時）。同じ日のうちは終えた行を残す。
+// 今日のリストを作り直す（起動時・日付や設定の変更時）。同じ日のうちは終えた行を
+// リストに残す（上限に数えるため）が、作り直した時点で終えている行は表示しない
+// ＝ OK した行は、その場では残り、再読み込みすると消える。
 // restore=true（起動時）: 同じ日・同じ設定で前回作ったリストがあればそれを使う。
 var listDate = null;
 function refreshDueList(restore){
@@ -179,6 +193,9 @@ function refreshDueList(restore){
     else if(saved) carry = doneEntries(recs, saved[p]);
     else carry = listDate === today ? doneEntries(recs, panes[p].due) : [];
     panes[p].due = buildToday(recs, settings, today, carry);
+    var done = {};
+    doneEntries(recs, panes[p].due).forEach(function(e){ done[e.id] = true; });
+    panes[p].due.forEach(function(e){ if(done[e.id]) e.hidden = true; else delete e.hidden; });
   });
   listDate = today;
   saveToday();
@@ -213,7 +230,10 @@ function paneRows(p, recs){
   if(!panes[p].all){
     return panes[p].due.filter(function(e){ return byId[e.id]; }).map(function(e){
       var r = byId[e.id];
-      return {id:e.id, turn:e.turn, rec:r, done:(r.completedTurns || []).indexOf(e.turn) !== -1};
+      return {id:e.id, turn:e.turn, rec:r, done:(r.completedTurns || []).indexOf(e.turn) !== -1, hidden:!!e.hidden};
+    }).filter(function(row){
+      // 再読み込み前に終えた行は出さない（ほかの端末で未完了に戻されたら、また出す）
+      return !(row.hidden && row.done);
     });
   }
   var settings = loadSettings(), pat = panes[p].filter.trim().toLowerCase();
@@ -303,11 +323,10 @@ function render(){
   renderQa();
   ["reading", "qa"].forEach(function(p){
     document.getElementById(p + "-head").classList.toggle("pane-focused", focusPane === p);
-    var rows = paneRows(p);
-    var done = rows.filter(function(r){ return r.done; }).length;
+    var rows = paneRows(p), prog = todayProgress(p);
     document.getElementById(p + "-count").textContent = panes[p].all
       ? "全部 " + rows.length + " 件"
-      : rows.length ? done + " / " + rows.length : "";
+      : prog.total ? prog.done + " / " + prog.total : "";
     document.querySelector('.view-toggle[data-pane="' + p + '"]').textContent = panes[p].all ? "全部 → 今日" : "今日 → 全部";
     var f = document.querySelector('.pane-filter[data-pane="' + p + '"]');
     f.style.display = panes[p].all ? "" : "none";
@@ -443,15 +462,16 @@ function markOk(id, p){
     var curIdx = rows.findIndex(function(x){ return x.id === id; });
     if(curIdx !== -1){
       var n = rows.length;
+      // いちばん近い未完了の行へ。同じ距離なら下を優先
       for(var d = 1; d < n; d++){
-        var prevIdx = curIdx - d;
-        if(prevIdx >= 0 && !rows[prevIdx].done){
-          panes[p].sel = rows[prevIdx].id;
-          break;
-        }
         var nextIdx = curIdx + d;
         if(nextIdx < n && !rows[nextIdx].done){
           panes[p].sel = rows[nextIdx].id;
+          break;
+        }
+        var prevIdx = curIdx - d;
+        if(prevIdx >= 0 && !rows[prevIdx].done){
+          panes[p].sel = rows[prevIdx].id;
           break;
         }
       }
