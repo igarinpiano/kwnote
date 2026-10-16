@@ -85,11 +85,16 @@ function getRegDate(){
   var v = document.getElementById("reg-date-input").value;
   return v || todayStr();
 }
+// turn t の予定日 = 登録日 + n[t-1] 日。β版（?beta=true）だけ「わからない」の記録でうしろにずれる（beta.js）
+function turnDate(entity, settings, t){
+  var d = addDays(entity.registeredDate, settings.n[t-1] || 0);
+  return KWBeta.enabled ? KWBeta.extendDate(entity, settings, t, d) : d;
+}
 function dueTurn(entity, settings, today){
   var n = settings.n;
   for(var t=1; t<=n.length; t++){
     if(entity.completedTurns && entity.completedTurns.indexOf(t) !== -1) continue;
-    var sched = addDays(entity.registeredDate, n[t-1] || 0);
+    var sched = turnDate(entity, settings, t);
     if(sched <= today) return t;
     return null;
   }
@@ -99,7 +104,7 @@ function dueTurn(entity, settings, today){
 function nextTurn(entity, settings){
   for(var t=1; t<=settings.n.length; t++){
     if(entity.completedTurns && entity.completedTurns.indexOf(t) !== -1) continue;
-    return {turn:t, date:addDays(entity.registeredDate, settings.n[t-1] || 0)};
+    return {turn:t, date:turnDate(entity, settings, t)};
   }
   return null;
 }
@@ -141,7 +146,7 @@ function buildToday(recs, settings, today, carry){
   recs.forEach(function(r){
     if(!alive(r) || have[r.id]) return;
     var t = dueTurn(r, settings, today);
-    if(t) cand.push({id:r.id, turn:t, sched:addDays(r.registeredDate, settings.n[t-1] || 0), reg:r.registeredDate || ""});
+    if(t) cand.push({id:r.id, turn:t, sched:turnDate(r, settings, t), reg:r.registeredDate || ""});
   });
   var order = settingOrder(settings);
   if(order === "random") shuffle(cand);
@@ -382,6 +387,7 @@ function renderQa(){
     tr.appendChild(tdNote);
 
     if(all) tr.appendChild(actionsCell("qa", row));
+    if(KWBeta.enabled) KWBeta.decorateRow(tr, row);
     tbody.appendChild(tr);
   });
 }
@@ -490,6 +496,7 @@ function deleteRecord(p, id){
   updateRecord(p, id, function(r){
     (p === "qa" ? KWSync.ITEM_TEXT : KWSync.SENTENCE_TEXT).forEach(function(k){ r[k] = ""; });
     r.completedTurns = [];
+    delete r.misses;   // β版の「わからない」の記録
     r.deleted = true;
   });
   reconcileDueLists();
@@ -1013,6 +1020,7 @@ function showAnswer(){
 document.addEventListener("keydown", function(e){
   if(e.isComposing || e.keyCode === 229) return;
   if(KWSync.isDialogOpen()){ KWSync.dialogKey(e); return; }
+  if(KWBeta.isOpen()){ KWBeta.key(e); return; }   // β版のフラッシュカード（開いている間だけ Space / ← / → / Esc）
   if(e.key === "Escape"){
     e.preventDefault();
     if(editing && isInputFocused()) cancelEdit();
@@ -1036,6 +1044,7 @@ document.addEventListener("keydown", function(e){
 });
 
 // ---- 起動 ----
+if(KWBeta.enabled) KWBeta.init();
 refreshDueList(true);
 render();
 updatePurgeRow();

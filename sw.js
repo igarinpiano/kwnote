@@ -2,8 +2,8 @@
 // Network first, revalidating with the server every time (cheap 304s), so a
 // deploy is picked up immediately instead of after the 10-minute HTTP cache
 // of GitHub Pages. The cache is only the offline fallback.
-var CACHE = "kwnote-v3";
-var SHELL = ["index.htm", "script.js", "sync.js", "qr.js", "style.css", "manifest.webmanifest", "icon.svg"];
+var CACHE = "kwnote-v4";
+var SHELL = ["index.htm", "script.js", "sync.js", "beta.js", "qr.js", "style.css", "manifest.webmanifest", "icon.svg"];
 
 self.addEventListener("install", function(e){
   e.waitUntil(caches.open(CACHE).then(function(c){ return c.addAll(SHELL); }).then(function(){ return self.skipWaiting(); }));

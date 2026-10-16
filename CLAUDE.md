@@ -11,6 +11,7 @@
 | `script.js` | 画面・状態・キー操作（j/k/Shift+J/K/Enter/c）・登録/編集/削除・同期ボタンの配線 |
 | `sync.js` | `KWSync`: マージ規則、同期コード（QR/テキスト）、LAN サーバー通信、QR 表示/読み取りダイアログ |
 | `qr.js` | `KWQR`: 依存ゼロの QR エンコーダ（byte mode, v1–40, L/M/Q/H） |
+| `beta.js` | `KWBeta`: URL に `?beta=true` を付けたときだけ動く試験機能（フラッシュカード・「わからない」の記録 `misses` と予定の延長）。`script.js` より先に読み込む。無いときは `KWBeta.enabled = false` で、`script.js` のフック（`turnDate`・keydown・`renderQa`・起動）は何もしない＝通常版の動作は変えない |
 | `style.css` | Windows XP 風スタイル（作者の意図。崩さない） |
 | `sw.js` / `manifest.webmanifest` / `icon.svg` | PWA（https / localhost のときだけ SW 登録） |
 | `Cargo.toml`（ルート） | Cargo workspace（members = `cli`）。`cross` は workspace ルートしか Docker にマウントしないため、`cli/` が埋め込む `../../index.htm` 等が見えるようルートを workspace にしている。`Cargo.lock`・`target/` もルート |
@@ -44,6 +45,7 @@ Web 側は**ビルド工程なし・クラシック `<script>`**（ES modules �
   - 溜まった印を消すのは**利用者の明示的な操作だけ**（purge）: Web の CLEAN UP（`purgeDeleted`）、`kwnote purge`、TUI `:purge!`。自動では消さない（まだ同期していない端末があると項目が復活するため。日数での自動失効も入れていない）。purge は保存に `store::replace` を使う（`commit` はディスク上の印をマージで戻してしまう）。LAN 同期中の Web は `POST /api/purge` でサーバーと一緒に消し、返ってきた doc で**置き換える**。
 - **変更時は必ず `updatedAt` を更新し、しかも直前の値より厳密に大きくする**（JS `nextStamp` / Rust `next_stamp`・`Record::touch`）。同一ミリ秒で同値になると下のタイ規則で `deleted` が OR され、「削除→元に戻す」が失われる（実際に起きたバグ）。
 - 未知フィールドは保持する（Rust は `#[serde(flatten)] extra`）。旧データ（`updatedAt` なし・`note: null` 等）も読めること。
+- **β版だけのフィールド** item `misses: [{date, turn}]`（フラッシュカードの「わからない」。同じ日・同じ turn は 1 回）。β版の Web では turn t の予定日が `max(登録日 + n[t-1], 各 miss(turn m ≤ t) の date + 1 + (n[t-1] - n[m-1]))` になる（`turnDate` → `KWBeta.extendDate`、`tests/beta_schedule.mjs`）。通常版の Web と CLI/TUI は予定に使わず、未知フィールドとして保持するだけ（`dueTurn` ⇔ `due_turn` の一致は通常版について）。Web の削除では消す。フラッシュカードの「今日はもう済ませた」は端末ごとの localStorage `kw_flash`
 
 ### マージ規則（`sync.js mergeDocs` ⇔ `model.rs merge_docs`、必ず両方同時に変更）
 
@@ -76,6 +78,7 @@ Web 側は**ビルド工程なし・クラシック `<script>`**（ES modules �
 ## キー操作
 
 - **Web はオリジナルの `j` / `k` / `Enter` / `c` に、表の切り替え `Shift+J`（もんだいへ）/ `Shift+K`（ぶんしょうへ）を足しただけ（+ `Esc` で入力欄から抜ける・ダイアログを閉じる）。モード表示・コマンド欄・Undo は無い。** 利用者は Vimium 等のブラウザ拡張を使うので、これ以上キーを増やさない（以前 vim 風キーを足して `x`・`t`・`u`・`d`・`/`・`?` などが Vimium と衝突した。`J`/`K` は Vimium のタブ移動と重なるが利用者の指定）。ほかの機能はボタンで提供する（今日⇄全部、全部表示の ✎/🗑 と絞り込み）。
+- β版のフラッシュカード（`beta.js`）は開いている間だけキーを受け取る: `Space`/`Enter` 裏返す・`→`/`c` 覚えた・`←` わからない・`j`/`k` 次/前のカード・`Esc` 閉じる。文字キーは通常版にあるものだけ（増やさない）。
 - 選択（フォーカス）は両方の表にあり、`focusPane` 側に j/k/c/Enter が効く（見出しに ▶）。ぶんしょうの完了は `c`（スマホは Sure / 右スワイプ）。Shift 判定は `e.shiftKey` で行う（Caps Lock だけなら通常の j/k）。
 - スマホの下部ボタンは ▲ ▼ ⇄ Show Sure の 5 つだけにする。
 - 入力欄フォーカス中（チェックボックス等は除く）・IME 変換中（`isComposing`/keyCode 229）はキーを奪わない。フォームの Enter は「次の欄 / 最後の欄で登録」。
@@ -90,8 +93,9 @@ cd cli && cargo clippy && cargo fmt
 cd cli && cargo run -q --example qr_fixtures > /tmp/qr.json && node ../tests/qr_crosscheck.mjs /tmp/qr.json
 node tests/sync_interop.mjs      # 要 target/debug/kwnote（ルートで cargo build）。JS⇔Rust の同期コード往復とマージ一致（乱数200件）
 node tests/sheets_gs.mjs         # tools/sheets/kwnote.gs（スプレッドシート連携）を触ったら
-for f in script.js sync.js qr.js sw.js; do node --check $f; done
-node tests/web_version.mjs --fix # Web ファイル（style.css/qr.js/sync.js/script.js）を変えたら必ず実行
+node tests/beta_schedule.mjs     # beta.js の予定の延長
+for f in script.js sync.js beta.js qr.js sw.js; do node --check $f; done
+node tests/web_version.mjs --fix # Web ファイル（style.css/qr.js/sync.js/beta.js/script.js）を変えたら必ず実行
 ```
 
 ## CI・リリース

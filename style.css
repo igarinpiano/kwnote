@@ -284,3 +284,50 @@ input[type=text], input[type=date], textarea, input[type=number]{
   .sync-row button{flex:1 1 30%;}
   input[type=text], input[type=date], textarea, input[type=number]{font-size:16px;} /* no iOS zoom */
 }
+
+/* ---- β版（?beta=true）: フラッシュカード ---- */
+.beta-badge{
+  display:inline-block; margin-left:8px; padding:0 6px; font-size:0.8em; vertical-align:middle;
+  background:#ffd23f; color:#000; text-shadow:none; border:1px solid #000; border-radius:3px;
+}
+.miss-badge{margin-left:6px; font-size:0.75rem; color:#b00; font-weight:bold; white-space:nowrap;}
+.flash-btn{margin-right:6px;}
+.flash-window{width:min(640px, 100%);}
+.flash-body{align-items:stretch;}
+.flash-top{display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; font-size:0.85rem;}
+.flash-progress{font-family:monospace;}
+.flash-card{
+  min-height:min(46vh, 320px); display:flex; flex-direction:column; gap:10px;
+  padding:14px 18px; cursor:pointer; user-select:none; background:var(--turn1-bg); color:#000;
+  border-top:3px solid #fff; border-left:3px solid #fff;
+  border-bottom:3px solid #d2cba4; border-right:3px solid #d2cba4;
+  box-shadow:2px 2px 6px rgba(0,0,0,0.25); transition:transform 0.1s;
+  touch-action:pan-y;
+}
+.flash-card.turn-color-1{background:var(--turn1-bg);} .flash-card.turn-color-2{background:var(--turn2-bg);}
+.flash-card.turn-color-3{background:var(--turn3-bg);} .flash-card.turn-color-4{background:var(--turn4-bg);}
+.flash-card.turn-color-5{background:var(--turn5-bg);} .flash-card.turn-color-6{background:var(--turn6-bg);}
+.flash-card.turn-color-7{background:var(--turn7-bg);} .flash-card.turn-color-8{background:var(--turn8-bg);}
+.flash-card.turn-color-done{background:#fff;}
+.flash-card.flash-flipped{background:#fff; border-color:#0058e6;}
+.flash-card.flash-anim{animation:flash-flip 0.18s ease-out;}
+@keyframes flash-flip{from{transform:scaleX(0.2);} to{transform:scaleX(1);}}
+.flash-card-head{display:flex; justify-content:space-between; font-size:0.8rem; color:#555; margin-top:-4px;}
+.flash-main{flex:1; display:flex; flex-direction:column; justify-content:center; gap:10px;}
+.flash-side{font-weight:bold;}
+.flash-text{font-size:1.5rem; text-align:center; white-space:pre-wrap; word-break:break-word;}
+.flash-note{font-size:0.95rem; text-align:center; color:#444; white-space:pre-wrap; word-break:break-word;}
+.flash-tap{font-size:0.75rem; text-align:center; color:#777; min-height:1.2em;}
+.flash-controls{display:flex; gap:8px; justify-content:center; flex-wrap:wrap;}
+.flash-controls button{flex:1 1 0; min-width:90px; padding:10px 6px; font-size:1rem;}
+.flash-done{text-align:center;}
+.flash-done-title{font-weight:bold; font-size:1.1rem;}
+.flash-missed{text-align:left; max-height:30vh; overflow:auto; margin:6px 0; padding-left:20px; font-size:0.9rem;}
+@media (max-width:700px){
+  .flash-backdrop{padding:0;}
+  .flash-window{height:100%; border-radius:0;}
+  .flash-card{min-height:50vh;}
+  .flash-text{font-size:1.3rem;}
+  .flash-controls button{min-width:0; padding:10px 2px; font-size:0.95rem; white-space:nowrap;}
+  .flash-hint{font-size:0.7rem;}
+}

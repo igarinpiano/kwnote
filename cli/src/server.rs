@@ -44,6 +44,11 @@ const ASSETS: &[Asset] = &[
         body: include_str!("../../sync.js"),
     },
     Asset {
+        path: "/beta.js",
+        mime: "text/javascript; charset=utf-8",
+        body: include_str!("../../beta.js"),
+    },
+    Asset {
         path: "/qr.js",
         mime: "text/javascript; charset=utf-8",
         body: include_str!("../../qr.js"),
