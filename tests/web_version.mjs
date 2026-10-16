@@ -9,7 +9,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const ASSETS = ["style.css", "qr.js", "sync.js", "script.js"];
+const ASSETS = ["style.css", "qr.js", "sync.js", "beta.js", "script.js"];
 const hash = crypto.createHash("sha256");
 for (const f of ASSETS) hash.update(fs.readFileSync(path.join(root, f)));
 const version = hash.digest("hex").slice(0, 10);
@@ -17,7 +17,7 @@ const version = hash.digest("hex").slice(0, 10);
 const file = path.join(root, "index.htm");
 const html = fs.readFileSync(file, "utf8");
 let found = 0;
-const fixed = html.replace(/(href|src)="(style\.css|qr\.js|sync\.js|script\.js)(\?v=[0-9a-f]*)?"/g, (_, attr, name) => {
+const fixed = html.replace(/(href|src)="(style\.css|qr\.js|sync\.js|beta\.js|script\.js)(\?v=[0-9a-f]*)?"/g, (_, attr, name) => {
   found++;
   return `${attr}="${name}?v=${version}"`;
 });

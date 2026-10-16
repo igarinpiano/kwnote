@@ -49,7 +49,7 @@ jobs:
         run: |
           git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "::error::no tag $TAG"; exit 1; }
           # everything that ends up inside the executable
-          paths="cli/src cli/build.rs cli/about.toml cli/about.hbs Cross.toml index.htm script.js sync.js qr.js style.css sw.js manifest.webmanifest icon.svg"
+          paths="cli/src cli/build.rs cli/about.toml cli/about.hbs Cross.toml index.htm script.js sync.js beta.js qr.js style.css sw.js manifest.webmanifest icon.svg"
           fail() { echo "::error::$GITHUB_REF_NAME differs from $TAG in what is compiled into kwnote ($1); cut a new release instead"; exit 1; }
           git diff --stat --exit-code "$TAG" HEAD -- $paths || fail "sources"
           # the lockfile moved from cli/ to the workspace root after v1.0.0: compare content
